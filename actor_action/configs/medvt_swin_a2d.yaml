@@ -1,0 +1,60 @@
+TRAIN:
+  lr: 0.0001
+  lr_backbone: 0.00001
+  end_lr: 0.000001
+  lr_drop: 5
+  poly_power: 0.9
+  weight_decay: 0.0001
+  epochs: 30
+  clip_max_norm: 0.1
+  aux_loss: False
+  batch_size: 1
+  train_size: 392
+  val_size: 360
+  output_dir: "./outputs/medvt_swin_actor_action/"
+  device: "cuda"
+  seed: 42
+  resume: False
+  start_epoch: 0
+  eval: False
+  num_workers: 0
+  world_size: 1
+  dist_url: "env://"
+  # use_lr_warmup: True
+
+LOGGING:
+  experiment_name: "swin_medvt_actor_action"
+  # wandb_user: "user"
+  # wandb_project: "medvt"
+  vis_freq: 5
+  pretrained_weights: "./ckpts/resnet_init/384_coco_r101.pth"
+  backbone: "swinB"
+  position_embedding: "sine"
+
+MODEL:
+  # enc_layers: 6
+  # enc_separable_attn: "thw"
+  encoder_cross_layer: False # Set to True for multiscale encoder
+  dec_layers: 9
+  dim_feedforward: 1024
+  hidden_dim: 384
+  dropout: 0.1
+  nheads: 8
+  num_frames: 6
+  num_queries: 6
+  pre_norm: False
+  masks: True
+  set_cost_class: 1
+  set_cost_bbox: 5
+  set_cost_giou: 2
+  mask_loss_coef: 1
+  dice_loss_coef: 1
+  bbox_loss_coef: 5
+  giou_loss_coef: 2
+  eos_coef: 0.1
+  remove_difficult: False
+  use_multiscale_enc: True
+  decoder_type: "multiscale_query"
+  lprop_mode: 2
+  feat_loc: "late"
+  pretrain_settings: None

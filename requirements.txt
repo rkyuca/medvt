@@ -1,0 +1,17 @@
+numpy
+scipy
+tqdm
+pandas
+cython
+mat73
+scikit-learn
+opencv-python
+matplotlib
+pillow
+imageio
+scikit-image
+einops
+ipdb
+wandb
+
+
