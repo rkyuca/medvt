@@ -367,7 +367,7 @@ def main(args):
     device = torch.device(args.device)
     from avos.models.medvt_swin import build_model_medvt_swinbackbone as build_model
     model, criterion = build_model(args)
-    logger.debug(str(model))
+    # logger.debug(str(model))
     model.to(device)
     # ########### MODEL TRAIN #################################
     train(args, device, model, criterion)

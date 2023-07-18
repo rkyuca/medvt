@@ -224,7 +224,7 @@ def train(args, device, model, criterion):
     print('starting main ...')
     # import ipdb; ipdb.set_trace()
     misc.init_distributed_mode(args)
-    logger.debug("git:\n  {}\n".format(misc.get_sha()))
+    # logger.debug("git:\n  {}\n".format(misc.get_sha()))
     # fix the seed for reproducibility
     seed = args.seed + misc.get_rank()
     torch.manual_seed(seed)
@@ -232,8 +232,7 @@ def train(args, device, model, criterion):
     random.seed(seed)
     # ########################### ####################
     # ### DATASETS ###################################
-    use_ytvos = not args.finetune
-    dataset_train = Davis16TrainDataset(num_frames=args.num_frames, train_size=args.train_size, use_ytvos=use_ytvos,
+    dataset_train = Davis16TrainDataset(num_frames=args.num_frames, train_size=args.train_size, use_ytvos=True,
                                         use_flow=args.use_flow)
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
@@ -273,20 +272,6 @@ def train(args, device, model, criterion):
         },
     ]
 
-    if args.fine_tune_lprop:
-        logger.debug(f'Using args.fine_tune_lprop:{args.fine_tune_lprop}')
-        param_dicts = [
-            {
-                "params": [p for n, p in model_without_ddp.named_parameters() if
-                           "label_propagator" in n and p.requires_grad],
-                "lr": args.lr
-            },
-            {
-                "params": [p for n, p in model_without_ddp.named_parameters() if
-                           "label_propagator" not in n and p.requires_grad],
-                "lr": args.lr_backbone,
-            },
-        ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     lr_scheduler = PolynomialLRDecay(optimizer, max_decay_steps=args.epochs - 1,
                                      end_learning_rate=args.end_lr, power=args.poly_power)
@@ -387,7 +372,7 @@ def main(args):
         ckpt = torch.load(args.resume_ckpt, map_location='cpu')['model']
         model.load_state_dict(ckpt, strict=False)
     setattr(model, 'model_name', args.model_name)
-    logger.debug(str(model))
+    # logger.debug(str(model))
     print('model_name: ' + args.model_name)
     model.to(device)
     # ########### MODEL TRAIN #################################
@@ -413,7 +398,7 @@ if __name__ == '__main__':
         parsed_args.pretrain_settings = parse_argdict(parsed_args.pretrain_settings)
     else:
         parsed_args.pretrain_settings = {}
-    params_summary = '%s_%s_s_%s_enc%s_dec%s_%s_t%dv%df%d_lr%0.1e_%0.1e_ep_%02d' % (
+    params_summary = '%s_%s_%s_enc%s_dec%s_%s_t%dv%df%d_lr%0.1e_%0.1e_ep_%02d' % (
         datetime.today().strftime('%Y%m%d%H%M%S'),
         parsed_args.model_name,
         parsed_args.backbone,

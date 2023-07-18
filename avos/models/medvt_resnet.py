@@ -854,7 +854,7 @@ def initi_pretrained_weights(args, model):
     model_keys = model.state_dict().keys()
     # import ipdb;
     # ipdb.set_trace()
-    if args.dec_layers > 6 and not args.finetune:
+    if args.dec_layers > 6:
         cks = [k for k in checkpoint.keys() if 'vistr.transformer.decoder.layers.5.' in k]
         for i in range(6, args.dec_layers):
             for ck in cks:
