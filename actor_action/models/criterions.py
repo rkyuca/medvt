@@ -1,18 +1,13 @@
 """
-Taken from https://github.com/Epiphqny/VisTR
-which was released under the Apache 2.0 license.
-And modified as needed.
+Based on
+DETR (https://github.com/facebookresearch/detr)
+and
+VisTR (https://github.com/Epiphqny/VisTR)
 """
-"""
-VisTR criterion classes.
-Modified from DETR (https://github.com/facebookresearch/detr)
-"""
-from bdb import Breakpoint
-import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
-from actor_action.util.misc import (nested_tensor_from_tensor_list, interpolate)
+from avos.utils.misc import interpolate
 
 
 def dice_loss(inputs, targets):
@@ -56,6 +51,7 @@ def dice_multiclass_loss(inputs, targets):
     loss = 1 - (numerator + 1) / (denominator + 1)
 
     return loss.mean()
+
 
 def sigmoid_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
     """
@@ -117,11 +113,11 @@ def crossentropy_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float =
 
     # Find the log-prob in the output, regarding the ground-truth label
     all_rows = torch.arange(len(prob))
-    log_pt = log_p[all_rows, targets.view(-1)] # why not use [:, targets.view(-1)]?
+    log_pt = log_p[all_rows, targets.view(-1)]  # why not use [:, targets.view(-1)]?
 
     # Revert the probability from log-prob
     pt = log_pt.exp()
-    focal_term = (1-pt)**gamma
+    focal_term = (1 - pt) ** gamma
 
     loss = focal_term * ce
 
@@ -134,13 +130,12 @@ class SetMultiLabelCriterion(nn.Module):
     """
 
     def __init__(self, weight_dict, losses, aux_loss=0, aux_loss_norm=0):
-        """ Create the criterion.
-        Parameters:
-            num_classes: number of object categories, omitting the special no-object category
-            matcher: module able to compute a matching between targets and proposals
-            weight_dict: dict containing as key the names of the losses and as values their relative weight.
-            eos_coef: relative classification weight applied to the no-object category
-            losses: list of all the losses to be applied. See get_loss for list of available losses.
+        """
+        Args:
+            weight_dict:
+            losses:
+            aux_loss:
+            aux_loss_norm:
         """
         super().__init__()
         self.num_classes = 1
@@ -149,7 +144,8 @@ class SetMultiLabelCriterion(nn.Module):
         self.aux_loss = aux_loss
         self.aux_loss_norm = aux_loss_norm != 0
 
-    def loss_masks(self, src_masks, targets, gt_index):
+    @staticmethod
+    def loss_masks(src_masks, targets, gt_index):
         """Compute the losses related to the masks: the focal loss and the dice loss.
            targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
         """
@@ -180,7 +176,7 @@ class SetMultiLabelCriterion(nn.Module):
         if isinstance(gt_index, list):
             for idx, gt_ind in enumerate(gt_index):
                 src_masks_ind = src_masks[:, gt_ind].squeeze()
-            
+
                 src_masks_ind = src_masks_ind.flatten(1)
                 target_masks_ind = target_masks[idx].flatten()
 
@@ -188,7 +184,7 @@ class SetMultiLabelCriterion(nn.Module):
                 dice_loss_ += dice_multiclass_loss(src_masks_ind, target_masks_ind) / len(gt_index)
         else:
             src_masks = src_masks[:, gt_index].squeeze()
-            
+
             src_masks = src_masks.flatten(1)
             target_masks = target_masks.flatten()
 
@@ -200,7 +196,7 @@ class SetMultiLabelCriterion(nn.Module):
             #     reduction='mean',
             #     force_reload=False
             # )
-            dice_loss_ = dice_multiclass_loss(src_masks, target_masks)
+            # dice_loss_ = dice_multiclass_loss(src_masks, target_masks)
         losses = {
             "loss_mask": focal_loss_,  # + 0.2 * l1_loss,
             # "loss_dice": dice_loss_,
@@ -210,6 +206,7 @@ class SetMultiLabelCriterion(nn.Module):
     def forward(self, outputs, targets, gt_idex):
         """ This performs the loss computation.
         Parameters:
+             gt_idex:
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
@@ -218,23 +215,22 @@ class SetMultiLabelCriterion(nn.Module):
 
         assert "pred_masks" in outputs
         # import ipdb; ipdb.set_trace()
-        src_masks = outputs["pred_masks"] # index to one single frame
+        src_masks = outputs["pred_masks"]  # index to one single frame
         main_losses = self.loss_masks(src_masks, targets, gt_idex)
 
-        if "aux_pred_masks" in outputs and self.aux_loss>0:
+        if "aux_pred_masks" in outputs and self.aux_loss > 0:
             # import ipdb; ipdb.set_trace()
             aux_pred_masks = outputs["aux_pred_masks"]
             aux_losses = self.loss_masks(aux_pred_masks, targets, gt_idex)
             if self.aux_loss_norm:
-                w_main = 1.0/(1.0 + self.aux_loss)
-                w_aux = self.aux_loss/(1.0 + self.aux_loss)
+                w_main = 1.0 / (1.0 + self.aux_loss)
+                w_aux = self.aux_loss / (1.0 + self.aux_loss)
             else:
                 w_main = 1.0
                 w_aux = self.aux_loss
             keys = main_losses.keys()
             for k in keys:
-                main_losses[k] = w_main* main_losses[k] + w_aux*aux_losses[k]
+                main_losses[k] = w_main * main_losses[k] + w_aux * aux_losses[k]
 
         losses.update(main_losses)
         return losses
-

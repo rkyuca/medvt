@@ -5,22 +5,17 @@ which was again Modified from DETR (https://github.com/facebookresearch/detr)
 And modified as needed.
 """
 import torchvision.ops
-import copy
-from typing import Optional, List, OrderedDict
+from typing import Optional, List, OrderedDict, Dict
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 import torchvision
-from torchvision.models._utils import IntermediateLayerGetter
-from typing import Dict, List
-import math
 import logging
 
-from avos.models.utils import get_clones, get_activation_fn
+from avos.models.utils import get_clones, get_activation_fn, expand
 from avos.models import criterions
 from avos.models.swin_transformer_3d import SwinTransformer3D
 from avos.utils.misc import (NestedTensor, nested_tensor_from_tensor_list)
-from avos.utils.misc import NestedTensor, is_main_process
 from avos.models.label_propagation import LabelPropagator
 from avos.models.position_encoding import build_position_encoding
 BN_MOMENTUM = 0.1
@@ -72,7 +67,7 @@ class MaskHeadSmallConv(nn.Module):
 
         cur_fpn = fpns[0]
         if cur_fpn.size(0) != x.size(0):
-            cur_fpn = _expand(cur_fpn, x.size(0) // cur_fpn.size(0))
+            cur_fpn = expand(cur_fpn, x.size(0) // cur_fpn.size(0))
         x = cur_fpn + F.interpolate(x, size=cur_fpn.shape[-2:], mode="nearest")
         x = self.lay3(x)
         x = self.gn3(x)
@@ -81,7 +76,7 @@ class MaskHeadSmallConv(nn.Module):
 
         cur_fpn = fpns[1]
         if cur_fpn.size(0) != x.size(0):
-            cur_fpn = _expand(cur_fpn, x.size(0) // cur_fpn.size(0))
+            cur_fpn = expand(cur_fpn, x.size(0) // cur_fpn.size(0))
         x = cur_fpn + F.interpolate(x, size=cur_fpn.shape[-2:], mode="nearest")
         x = self.lay4(x)
         x = self.gn4(x)
@@ -90,7 +85,7 @@ class MaskHeadSmallConv(nn.Module):
 
         cur_fpn = fpns[2]
         if cur_fpn.size(0) != x.size(0):
-            cur_fpn = _expand(cur_fpn, x.size(0) // cur_fpn.size(0))
+            cur_fpn = expand(cur_fpn, x.size(0) // cur_fpn.size(0))
         x = cur_fpn + F.interpolate(x, size=cur_fpn.shape[-2:], mode="nearest")
         # dcn for the last layer
         offset = self.conv_offset(x)
@@ -376,8 +371,8 @@ class Transformer(nn.Module):
                     obj_attn_masks.append(obj_attn_mask_f)
                 # import ipdb;ipdb.set_trace()
                 obj_attn_masks = torch.cat(obj_attn_masks, dim=0)
-                import ipdb;
-                ipdb.set_trace()
+                #import ipdb;
+                # ipdb.set_trace()
                 if self.decoder_attn_fuse is not None and self.decoder_attn_fuse == 'add':
                     obj_attn_masks = self.bbox_sal_adapter(obj_attn_masks)
                     deep_feature = deep_feature + obj_attn_masks
@@ -408,6 +403,7 @@ class TransformerEncoder(nn.Module):
 
         for i in range(len(num_encoder_layers)):
             # print('Encoder stage:%d dim_feedforward:%d' % (i, dim_feedforward))
+            # import ipdb;ipdb.set_trace()
             self.layers.append(nn.ModuleList())
             for j in range(num_encoder_layers[i]):
                 _nhead = nhead if i == 0 else 1
@@ -811,6 +807,7 @@ class TransformerDecoderLayer(nn.Module):
 class VOS_SwinMEDVT(nn.Module):
     def __init__(self, args, backbone, backbone_dims, hidden_dim, transformer, num_frames, temporal_strides=[1], n_class=1):
         super().__init__()
+        # import ipdb; ipdb.set_trace()
         self.temporal_strides = temporal_strides
         self.backbone_name = args.backbone
         self.backbone = backbone
@@ -901,8 +898,10 @@ class VOS_SwinMEDVTLPROP(VOS_SwinMEDVT):
     def __init__(self, args, backbone, backbone_dims, hidden_dim, transformer, num_frames,
                  pretrain_settings={}, lprop_mode=None, temporal_strides=[1], feat_loc=None,
                  stacked=1, n_class=1):
+        # import ipdb; ipdb.set_trace()
         super().__init__(args, backbone, backbone_dims, hidden_dim, transformer, num_frames, n_class=n_class)
-        print('Initializing Swin-MEDVT-LPROP')
+        logger.debug('Initializing Swin-MEDVT-LPROP')
+        # import ipdb;ipdb.set_trace()
         self.stacked = stacked
         self.aux_loss = args.aux_loss > 0
         if feat_loc == 'early_coarse':
@@ -956,13 +955,14 @@ class VOS_SwinMEDVTLPROP(VOS_SwinMEDVT):
                 p._requires_grad = False
                 p.requires_grad = False
         """
-        print('freezing pretrained ...')
+        logger.debug('freezing pretrained ...')
         for name, p in self.named_parameters():
             if 'label_propagator' not in name:
                 p._requires_grad = False
                 p.requires_grad = False
 
     def _forward_one_samples(self, samples: NestedTensor):
+        # import ipdb;ipdb.set_trace()
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
         # import ipdb; ipdb.set_trace()
@@ -994,6 +994,7 @@ class VOS_SwinMEDVTLPROP(VOS_SwinMEDVT):
         outputs_seg_masks_b4lprop = self.insmask_head(mask_ins)
         outputs_seg_masks_b4lprop = outputs_seg_masks_b4lprop.squeeze(0)
         outputs_seg_masks_lprop = outputs_seg_masks_b4lprop.permute(1, 0, 2, 3)
+        # import ipdb;ipdb.set_trace()
         for i in range(self.stacked):
             if self.feat_loc == 'late':
                 outputs_seg_masks_lprop = self.label_propagator(outputs_seg_masks_lprop, seg_feats).squeeze(1)
@@ -1005,6 +1006,7 @@ class VOS_SwinMEDVTLPROP(VOS_SwinMEDVT):
             elif self.feat_loc == 'early_fine':
                 early_fine_feats = features[0].tensors.squeeze(0)
                 outputs_seg_masks_lprop = self.label_propagator(outputs_seg_masks_lprop, early_fine_feats).squeeze(1)
+        # import ipdb;ipdb.set_trace()
         if self.lprop_mode in [1, 2]:
             if sum(outputs_seg_masks_lprop.shape[-2:]) < sum(outputs_seg_masks_b4lprop.shape[-2:]):
                 outputs_seg_masks_lprop = F.interpolate(outputs_seg_masks_lprop, outputs_seg_masks_b4lprop.shape[-2:])
@@ -1026,7 +1028,6 @@ class VOS_SwinMEDVTLPROP(VOS_SwinMEDVT):
 
 
 def build_swin_s_backbone(is_train, _swin_s_pretrained_path):
-    print('creating swin-s-3d backbone>>>')
     logger.debug('creating swin-s-3d backbone>>>')
     swin = SwinTransformer3D(pretrained=None,
                              pretrained2d=True,
@@ -1071,14 +1072,13 @@ def build_swin_s_backbone(is_train, _swin_s_pretrained_path):
             del_keys.append(kk)
     for kk in del_keys:
         del state_dict[kk]
-    print('len(state_dict): %d' % len(state_dict))
-    print('len(swin_b.state_dict()): %d' % len(swin.state_dict()))
+    # logger.debug('len(state_dict): %d' % len(state_dict))
+    # logger.debug('len(swin_b.state_dict()): %d' % len(swin.state_dict()))
     swin.load_state_dict(state_dict)
     return swin
 
 
 def build_swin_b_backbone(is_train, _swin_b_pretrained_path):
-    print('build_swin_b_backbone>>')
     logger.debug('build_swin_b_backbone>>')
     swin = SwinTransformer3D(pretrained=None,
                              pretrained2d=True,
@@ -1123,16 +1123,16 @@ def build_swin_b_backbone(is_train, _swin_b_pretrained_path):
             del_keys.append(kk)
     for kk in del_keys:
         del state_dict[kk]
-    print('len(state_dict): %d' % len(state_dict))
-    print('len(swin_b.state_dict()): %d' % len(swin.state_dict()))
-    matched_keys = [k for k in state_dict.keys() if k in swin.state_dict().keys()]
-    print('matched keys:%d' % len(matched_keys))
+    # logger.debug('len(state_dict): %d' % len(state_dict))
+    # logger.debug('len(swin_b.state_dict()): %d' % len(swin.state_dict()))
+    # matched_keys = [k for k in state_dict.keys() if k in swin.state_dict().keys()]
+    # logger.debug('matched keys:%d' % len(matched_keys))
     swin.load_state_dict(state_dict, strict=False)
     return swin
 
 
-def build_model_medvt_swinbackbone(args):
-    print('using backbone:%s' % args.backbone)
+def build_model_medvt_swinbackbone_without_criterion(args):
+    logger.debug('using backbone:%s' % args.backbone)
     if args.backbone == 'swinS':
         backbone = build_swin_s_backbone(args.is_train, args.swin_s_pretrained_path)
         backbone_dims = (192, 384, 768, 768)
@@ -1141,7 +1141,7 @@ def build_model_medvt_swinbackbone(args):
         backbone_dims = (256, 512, 1024, 1024)
     else:
         raise ValueError('backbone: %s not implemented!' % args.backbone)
-    # print('args.dim_feedforward:%d' % args.dim_feedforward)
+    # logger.debug('args.dim_feedforward:%d' % args.dim_feedforward)
     # import ipdb; ipdb.set_trace()
     transformer = Transformer(
         num_frames=args.num_frames,
@@ -1278,23 +1278,29 @@ def build_model_medvt_swinbackbone(args):
                     ipdb.set_trace()
                     shape_mismatch.append(kk)
                     # print('here')
-        print('len(shape_mismatch):%d' % len(shape_mismatch))
+        # logger.debug('len(shape_mismatch):%d' % len(shape_mismatch))
         for kk in shape_mismatch:
             del checkpoint[kk]
         transformer.load_state_dict(checkpoint, strict=False)
         shape_matched_keys = [k for k in checkpoint.keys() if k in transformer.state_dict().keys()]
-        print('shape_matched keys:%d' % len(shape_matched_keys))
+        # logger.debug('shape_matched keys:%d' % len(shape_matched_keys))
     if args.lprop_mode > 0:
         temporal_strides = [1] if not hasattr(args, 'temporal_strides') else args.temporal_strides
         model = VOS_SwinMEDVTLPROP(args, backbone, backbone_dims=backbone_dims, hidden_dim=args.hidden_dim,
                                    transformer=transformer, num_frames=args.num_frames,
                                    pretrain_settings=args.pretrain_settings,
                                    lprop_mode=args.lprop_mode, temporal_strides=temporal_strides,
-                                   feat_loc=args.feat_loc, stacked=args.stacked_lprop)
+                                   feat_loc=args.feat_loc, stacked=args.stacked_lprop, n_class=args.num_classes)
     else:
         model = VOS_SwinMEDVT(args, backbone, backbone_dims=backbone_dims, hidden_dim=args.hidden_dim,
-                              transformer=transformer, num_frames=args.num_frames)
+                              transformer=transformer, num_frames=args.num_frames, n_class=args.num_classes)
 
+    return model
+
+
+def build_model_medvt_swinbackbone(args):
+    # Model
+    model = build_model_medvt_swinbackbone_without_criterion(args)
     # Losses
     weight_dict = {"loss_mask": args.mask_loss_coef, "loss_dice": args.dice_loss_coef}
     losses = ["masks"]
@@ -1303,5 +1309,6 @@ def build_model_medvt_swinbackbone(args):
     else:
         criterion = criterions.SetCriterion(weight_dict=weight_dict, losses=losses)
     criterion.to(torch.device(args.device))
-    print('swin model')
+    logger.debug('swin model')
     return model, criterion
+

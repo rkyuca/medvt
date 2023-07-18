@@ -38,7 +38,6 @@ class MoCADataset(torch.utils.data.Dataset):
         else:
             video_names = sequence_names
         logger.debug('moca-val num of videos: {}'.format(len(video_names)))
-        print('moca-val num of videos: {}'.format(len(video_names)))
         for video_name in video_names:
             frames = sorted(glob.glob(os.path.join(self.dataset_path, video_name, '*.jpg')))
             self.frames_info[video_name] = [frame_path.split('/')[-1][:-4] for frame_path in frames]

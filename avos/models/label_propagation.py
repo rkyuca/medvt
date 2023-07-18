@@ -296,76 +296,141 @@ class MaskedLPropDecoderLayer(nn.Module):
         return out
 
 
+class MaskedLPropDecoderLayerV1(nn.Module):
+    def __init__(self, feature_dim, key_dim, lprop_mode):
+        super().__init__()
+        self.cross_attn = MaskedGraphAttention(feature_dim=feature_dim, key_dim=key_dim, tau=1 / 30,
+                                               topk=False, no_learning=(lprop_mode == 3))
+
+        if lprop_mode != 3:
+            self.self_attn = GraphAttention(feature_dim=feature_dim, key_dim=key_dim)
+            self.norm = nn.InstanceNorm2d(feature_dim)
+
+        self.lprop_mode = lprop_mode
+
+    def instance_norm(self, src, input_shape):
+        num_frames, num_sequences, c, h, w = input_shape
+        # Normlization
+        src = src.reshape(num_frames, h, w, num_sequences, c).permute(0, 3, 4, 1, 2)
+        src = src.reshape(-1, c, h, w)
+        src = self.norm(src)
+        # reshape back
+        src = src.reshape(num_frames, num_sequences, c, -1).permute(0, 3, 1, 2)
+        src = src.reshape(-1, num_sequences, c)
+        return src
+
+    def forward(self, tgt, memory, pos_enc=None):
+        """
+        tgt:    num_frames, num_sequences, c, h, w
+        memory: num_frames, num_sequences, c, h, w
+        pos_enc:num_frames, num_sequences, ce, h, w
+        """
+        # import ipdb;ipdb.set_trace()
+        tgt_shape = tgt.shape
+        mem_shape = memory.shape
+        pos_enc_shape = pos_enc.shape
+        num_frames, num_sequences, c, h, w = mem_shape
+
+        mask = torch.eye(num_frames).to(tgt.device)  # torch.zeros((num_frames, h, w, num_frames, h, w)).to(tgt.device)
+        mask[mask == 1] = -1 * float("Inf")
+        mask = mask.view(num_frames, 1, 1, num_frames, 1, 1).repeat(1, h, w, 1, h, w)
+        # mask2 = pos_enc.squeeze(1).squeeze(1) > 0.5
+        # mask = mask + mask2.view(*mask2.shape, 1, 1, 1).repeat(1, 1, 1, *mask2.shape[:3])
+        mask = mask.view(num_frames * h * w, num_frames * h * w)
+
+        tgt = tgt.reshape(num_frames, num_sequences, c, -1).permute(0, 3, 1, 2)
+        tgt = tgt.reshape(-1, num_sequences, c)
+
+        memory = memory.reshape(num_frames, num_sequences, c, -1).permute(0, 3, 1, 2)
+        memory = memory.reshape(-1, num_sequences, c)
+
+        if pos_enc is not None:
+            pos_enc = pos_enc.reshape(num_frames, num_sequences, -1, h * w).permute(0, 3, 1, 2)
+            pos_enc = pos_enc.reshape(num_frames * h * w, num_sequences, -1)
+
+        if self.lprop_mode != 3:
+            # self-attention
+            tgt_attn = self.self_attn(query=tgt, key=tgt, value=tgt)
+            tgt = tgt + tgt_attn
+            tgt = self.instance_norm(tgt, tgt_shape)
+
+        # ## Mask Encoding transform
+        enc = self.cross_attn(query=tgt, key=memory, value=pos_enc, mask=mask)
+        # import ipdb; ipdb.set_trace()
+        enc = self.instance_norm(enc, pos_enc_shape)
+        out = enc.reshape(num_frames, h, w, num_sequences, -1).permute(0, 3, 4, 1, 2)
+        # if self.lprop_mode != 3:
+        #    out = out.sigmoid()
+
+        return out
+
+
 class LabelPropagator(nn.Module):
-    def __init__(self, lprop_mode, feat_dim=392, hidden_dim=128, label_scale=8, n_class=1):
+    def __init__(self, lprop_mode, feat_dim=392, hidden_dim=128, label_scale=16, n_class=80):
         super().__init__()
         self.lprop_mode = lprop_mode
-        self.label_scale = label_scale
+        self.lprop_scale = label_scale
         lbl_enc_dims = [16, 32, 64, 16]
         if lprop_mode == 1:
             self.prop_layer = LPropDecoderLayer(feat_dim, hidden_dim)
         else:
-            self.prop_layer = MaskedLPropDecoderLayer(feat_dim, hidden_dim, lprop_mode)
-        if self.lprop_mode != 3:
-            self.label_encoder = LabelEncoder(lbl_enc_dims, n_class=n_class)
-            self.label_decoder = nn.Sequential(
-                nn.Conv3d(lbl_enc_dims[-1], lbl_enc_dims[-1], (3, 3, 3), padding='same'),
-                nn.GroupNorm(4, lbl_enc_dims[-1]),
-                nn.ReLU(),
-                nn.Conv3d(lbl_enc_dims[-1], n_class, (1, 1, 1), padding='same')
-            )
+            self.prop_layer = MaskedLPropDecoderLayer(feat_dim, hidden_dim, lprop_mode=lprop_mode)
+
+        self.label_encoder = LabelEncoder(lbl_enc_dims, n_class=n_class)
+        self.label_decoder = nn.Sequential(
+            nn.Conv3d(lbl_enc_dims[-1], lbl_enc_dims[-1], (3, 3, 3), padding='same'),
+            nn.GroupNorm(4, lbl_enc_dims[-1]),
+            nn.ReLU(),
+            nn.Conv3d(lbl_enc_dims[-1], n_class, (1, 1, 1), padding='same')
+        )
 
     def forward(self, masks, feats):
-        # original_shape = masks.shape[-2:]
-        if self.lprop_mode != 3:
-            original_shape = masks.shape[-2:]
-            up_shape = [int(s * self.label_scale) for s in original_shape]  # 16 #7
-            masks = F.interpolate(masks, up_shape)
-            masks_enc, _ = self.label_encoder(masks)
-            feats = F.interpolate(feats, masks_enc.shape[-2:])
-        else:
-            masks_enc = masks.unsqueeze(2)
-        feats = feats.unsqueeze(0)
-        if self.lprop_mode == 1:
-            middle_frame_index = feats.shape[1] // 2
-            prev_feats = feats[:, :middle_frame_index].permute(1, 0, 2, 3, 4)
-            curr_feats = feats[:, middle_frame_index:middle_frame_index + 1].permute(1, 0, 2, 3, 4)
-            next_feats = feats[:, middle_frame_index + 1:].permute(1, 0, 2, 3, 4)
-            prev_masks_enc = masks_enc.permute(1, 0, 2, 3, 4)[:, :middle_frame_index].permute(1, 0, 2, 3, 4)
-            curr_masks_enc = masks_enc.permute(1, 0, 2, 3, 4)[:, middle_frame_index:middle_frame_index + 1].permute(1,
-                                                                                                                    0,
-                                                                                                                    2,
-                                                                                                                    3,
-                                                                                                                    4)
-            next_masks_enc = masks_enc.permute(1, 0, 2, 3, 4)[:, middle_frame_index + 1:].permute(1, 0, 2, 3, 4)
-            # import ipdb;ipdb.set_trace()
-            tgt_feature = curr_feats
-            memory_feature = torch.cat([prev_feats, next_feats], dim=0)
-            memory_pos_enc = torch.cat([prev_masks_enc, next_masks_enc], dim=0)
-            # import ipdb;ipdb.set_trace()
-            curr_masks_enc_lpp = self.prop_layer(tgt_feature, memory_feature, memory_pos_enc)
-            curr_masks_enc_lpp = torch.mean(torch.cat([curr_masks_enc, curr_masks_enc_lpp], dim=1), dim=1)
-            masks_enc = torch.cat([prev_masks_enc.permute(1, 0, 2, 3, 4), curr_masks_enc_lpp.unsqueeze(0),
-                                   next_masks_enc.permute(1, 0, 2, 3, 4)], dim=1)
-            masks_enc = masks_enc.permute(0, 2, 1, 3, 4)
-        elif self.lprop_mode in [2, 3]:
-            # Bidirectional Label Propagation
-            masks_enc = self.prop_layer(feats.permute(1, 0, 2, 3, 4),
-                                        feats.permute(1, 0, 2, 3, 4),
-                                        masks_enc)
-            masks_enc = masks_enc.permute(1, 2, 0, 3, 4)
         # import ipdb;ipdb.set_trace()
-        if self.lprop_mode != 3:
-            masks = self.label_decoder(masks_enc)
-        else:
-            masks = masks_enc
+        # original_shape = masks.shape[-2:]
+        masks = masks.permute(1, 0, 2, 3).unsqueeze(0)
+        original_shape = masks.shape
+        # import ipdb; ipdb.set_trace()
+        # TODO: Use the learned mask encoding weights to reweight the loss
+        up_shape = [ int(s * self.lprop_scale) if idx > 2 else s for idx, s in enumerate(original_shape)]
+        up_shape = up_shape[-3:]
+
+        masks = F.interpolate(masks, up_shape)
+        masks_enc, _ = self.label_encoder(masks)
+        feats = F.interpolate(feats, masks_enc.shape[-2:])
+        feats = feats.unsqueeze(0)
+
+        if self.lprop_mode == 1:
+            # Unidirectional Label Propagation
+            prev_feats = feats[:, :-1].permute(1, 0, 2, 3, 4)
+            curr_feats = feats[:, -1:].permute(1, 0, 2, 3, 4)
+            prev_masks_enc = masks_enc[:, :-1].permute(1, 0, 2, 3, 4)
+            curr_masks_enc = self.prop_layer(curr_feats, prev_feats, prev_masks_enc)
+            curr_avg_masks_enc = torch.mean(torch.cat([masks_enc[:, -1:], curr_masks_enc], dim=1), dim=1)
+            new_masks_enc = torch.cat([masks_enc[:, :-1], curr_avg_masks_enc.unsqueeze(1)], dim=1)
+            new_masks_enc = new_masks_enc.permute(0, 2, 1, 3, 4)
+        elif self.lprop_mode == 2:
+            # Bidirectional Label Propagation
+            new_masks_enc = self.prop_layer(feats.permute(1, 0, 2, 3, 4),
+                                            feats.permute(1, 0, 2, 3, 4),
+                                            masks_enc.permute(1, 0, 2, 3, 4))
+            new_masks_enc = new_masks_enc.permute(1, 2, 0, 3, 4)
+
+        # masks = self.label_decoder(new_masks_enc).sigmoid()
+        masks = self.label_decoder(new_masks_enc)
+        # import ipdb;ipdb.set_trace()
+        masks = masks.squeeze(0)
         return masks
 
-# ########## Label Encoder used from: https://github.com/maoyunyao/JOINT/blob/main/ltr/models/joint/label_encoder.py
-class LabelEncoder(nn.Module):
 
-    def __init__(self, layer_dims, use_bn=True, n_class=1):
+# ########## Label Encoder used from: https://github.com/maoyunyao/JOINT/blob/main/ltr/models/joint/label_encoder.py
+
+class LabelEncoder(nn.Module):
+    """ Outputs the few-shot learner label and spatial importance weights given the segmentation mask """
+
+    def __init__(self, layer_dims, use_bn=True, n_class=80):
         super().__init__()
+        # self.conv_block = conv_block(1, layer_dims[0], kernel_size=3, stride=2, padding=1,
+        #                              batch_norm=False)
         self.conv_block = conv_block(n_class, layer_dims[0], kernel_size=3, stride=2, padding=1,
                                      batch_norm=False)
         self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -394,10 +459,14 @@ class LabelEncoder(nn.Module):
 
     def forward(self, label_mask):
         # label_mask: frames, seq, h, w
-        assert label_mask.dim() == 4
+        # assert label_mask.dim() == 4
+
+        # label_mask: [batch (1), num_class, num_frames, h, w]
 
         label_shape = label_mask.shape
-        label_mask = label_mask.view(-1, 1, *label_mask.shape[-2:])
+        # label_mask = label_mask.view(-1, 1, *label_mask.shape[-2:])
+        # import ipdb;ipdb.set_trace()
+        label_mask = label_mask.squeeze(0).permute(1, 0, 2, 3)  #squeeze batch, [num_frames, num_class, h, w]
 
         out = self.pool(self.conv_block(label_mask))
         out_tm = self.res2_tm(self.res1_tm(out))
@@ -405,8 +474,8 @@ class LabelEncoder(nn.Module):
         label_enc_tm = self.label_pred_tm(out_tm)
         sample_w_tm = self.samp_w_pred(out_tm)
 
-        label_enc_tm = label_enc_tm.view(label_shape[0], label_shape[1], *label_enc_tm.shape[-3:])
-        sample_w_tm = sample_w_tm.view(label_shape[0], label_shape[1], *sample_w_tm.shape[-3:])
+        label_enc_tm = label_enc_tm.view(label_shape[0], label_shape[2], *label_enc_tm.shape[-3:])
+        sample_w_tm = sample_w_tm.view(label_shape[0], label_shape[2], *sample_w_tm.shape[-3:])
 
         # Out dim is (num_seq, num_frames, layer_dims[-1], h, w)
         return label_enc_tm, sample_w_tm

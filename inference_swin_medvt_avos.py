@@ -3,14 +3,13 @@ Inference code for MED-VT.
 Based on VisTR (https://github.com/Epiphqny/VisTR)
 and DETR (https://github.com/facebookresearch/detr)
 """
-import time
+import sys
 import argparse
 import logging
 import random
 import numpy as np
 import os
 import torch
-
 import avos.utils.misc as utils_misc
 from avos.evals import run_inference
 from avos.evals import inference_on_all_vos_dataset
@@ -22,13 +21,13 @@ logger.setLevel(logging.DEBUG)
 def get_args_parser():
     parser = argparse.ArgumentParser('MED-VT', add_help=False)
 
-    # * Backbone
+    # Backbone
     parser.add_argument('--backbone', default='swinB', type=str,
                         help="backbone to use, [swinS, swinB]")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
                         help="Type of positional embedding to use on top of the image features")
 
-    # * Transformer
+    # Transformer
     parser.add_argument('--enc_layers', default=(6, 1), type=tuple,
                         help="Number of encoding layers in the transformer")
     parser.add_argument('--encoder_cross_layer', default=True, type=bool,
@@ -66,7 +65,7 @@ def get_args_parser():
     parser.add_argument('--is_train', default=0, type=int,
                              help='Choose 1 for train')
     parser.add_argument('--model_path', type=str,
-                        default='./ckpts/swin_medvt/swin_medvt.pth', required=True,
+                        default='./ckpts/swin_medvt/swin_medvt.pth',
                         help="Path to the model weights.")
     parser.add_argument('--swin_b_pretrained_path', type=str,
                         default="./ckpts/swin_init/swin_base_patch244_window877_kinetics400_22k.pth",
@@ -80,6 +79,8 @@ def get_args_parser():
     parser.add_argument("--save_pred", action="store_true", default=True)
     parser.add_argument('--masks', action='store_true', default=True,
                         help="Train segmentation head if the flag is provided")
+    parser.add_argument('--num_classes', default=1, type=int,
+                             help="Train segmentation head if the flag is provided")
     parser.add_argument('--dataset', type=str, default='davis')
     parser.add_argument('--sequence_names', type=str, default=None)
     parser.add_argument('--output_dir', type=str, default=None,
@@ -128,13 +129,14 @@ if __name__ == '__main__':
     if not os.path.exists(parsed_args.output_dir):
         os.makedirs(parsed_args.output_dir)
     experiment_name = str(parsed_args.model_path).split('/')[-2]
-    print('output_dir: '+str(parsed_args.output_dir))
-    print('experiment_name:%s' % experiment_name)
-    print('log file: ' + str(os.path.join(parsed_args.output_dir, 'out.log')))  # added by @RK
     logging.basicConfig(
         filename=os.path.join(parsed_args.output_dir, 'out.log'),
         format='%(asctime)s %(levelname)s %(module)s-%(lineno)d: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
     )
     logger.debug(parsed_args)
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    logger.debug('output_dir: ' + str(parsed_args.output_dir))
+    logger.debug('experiment_name:%s' % experiment_name)
+    logger.debug('log file: ' + str(os.path.join(parsed_args.output_dir, 'out.log')))
     main(parsed_args)

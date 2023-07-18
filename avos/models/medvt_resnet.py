@@ -23,6 +23,7 @@ from avos.models.label_propagation import LabelPropagator
 from avos.models.medvt_swin import MHAttentionMap
 from avos.models.position_encoding import build_position_encoding
 from avos.models.utils import conv3x3, get_clones, get_activation_fn, expand
+
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -517,6 +518,7 @@ class TransformerEncoderLayer(nn.Module):
             return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
         return self.forward_post(src, src_mask, src_key_padding_mask, pos, shapes=shapes)
 
+
 class TransformerDecoderLayer(nn.Module):
 
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
@@ -624,7 +626,7 @@ class VisTR(nn.Module):
 
 
 class MEDVT(nn.Module):
-    def __init__(self, vistr, freeze_vistr=False, temporal_strides=[1]):
+    def __init__(self, vistr, freeze_vistr=False, temporal_strides=[1], n_class=1):
         super().__init__()
         # import ipdb; ipdb.set_trace()
         self.backbone_name = 'resnet101'
@@ -646,7 +648,7 @@ class MEDVT(nn.Module):
             nn.Conv3d(256, 128, 3, padding='same', dilation=2),
             nn.GroupNorm(4, 128),
             nn.ReLU(),
-            nn.Conv3d(128, 1, 1))
+            nn.Conv3d(128, n_class, 1))
 
         self.temporal_strides = temporal_strides
 
@@ -718,10 +720,10 @@ class MEDVT(nn.Module):
 
 class MEDVT_LPROP(MEDVT):
     def __init__(self, args, vistr, freeze_vistr=False,
-                 pretrain_settings={}, lprop_mode=None, temporal_strides=[1], feat_loc=None, stacked=1):
+                 pretrain_settings={}, lprop_mode=None, temporal_strides=[1], feat_loc=None, stacked=1, n_class=1):
         super().__init__(vistr, freeze_vistr)
         # import ipdb; ipdb.set_trace()
-        print('Building model -> MEDVT_LPROP')
+        logger.debug('Building model -> MEDVT_LPROP')
         self.stacked = stacked
         self.num_frames = args.num_frames
         if feat_loc == 'early_coarse':
@@ -739,7 +741,7 @@ class MEDVT_LPROP(MEDVT):
 
         self.lprop_mode = lprop_mode
         self.label_propagator = LabelPropagator(lprop_mode, feat_dim=feat_dim, hidden_dim=hidden_dim,
-                                                label_scale=args.lprop_scale)
+                                                label_scale=args.lprop_scale, n_class=n_class)
         self.feat_loc = feat_loc
         self.temporal_strides = temporal_strides
 
@@ -925,9 +927,10 @@ def build_model(args):
                             lprop_mode=args.lprop_mode,
                             temporal_strides=temporal_strides,
                             feat_loc=args.feat_loc,
-                            stacked=args.stacked_lprop)
+                            stacked=args.stacked_lprop,
+                            n_class=args.num_classes)
     else:
-        model = MEDVT(vistr)
+        model = MEDVT(vistr, n_class=args.num_classes)
     ####################################################################################
     if args.is_train and hasattr(args, 'resnet101_coco_weights_path') and args.resnet101_coco_weights_path is not None:
         initi_pretrained_weights(args, model)
@@ -935,9 +938,10 @@ def build_model(args):
     weight_dict = {"loss_mask": args.mask_loss_coef, "loss_dice": args.dice_loss_coef}
     losses = ["masks"]
     if args.is_train:
-        criterion = criterions.SetCriterion(weight_dict=weight_dict, losses=losses, aux_loss=args.aux_loss, aux_loss_norm=args.aux_loss_norm)
+        criterion = criterions.SetCriterion(weight_dict=weight_dict, losses=losses, aux_loss=args.aux_loss,
+                                            aux_loss_norm=args.aux_loss_norm)
     else:
         criterion = criterions.SetCriterion(weight_dict=weight_dict, losses=losses)
     criterion.to(torch.device(args.device))
-    print('built resnet model')
+    logger.debug('built resnet model')
     return model, criterion

@@ -3,6 +3,7 @@ Inference code for MED-VT.
 Based on VisTR (https://github.com/Epiphqny/VisTR)
 and DETR (https://github.com/facebookresearch/detr)
 """
+import sys
 import argparse
 import logging
 import random
@@ -77,6 +78,8 @@ def get_args_parser():
     parser.add_argument("--save_pred", action="store_true", default=True)
     parser.add_argument('--masks', action='store_true', default=True,
                         help="Train segmentation head if the flag is provided")
+    parser.add_argument('--num_classes', default=1, type=int,
+                             help="Train segmentation head if the flag is provided")
     parser.add_argument('--dataset', type=str, default='davis')
     parser.add_argument('--sequence_names', type=str, default=None)
     parser.add_argument('--val_size', default=473, type=int,
@@ -129,20 +132,14 @@ if __name__ == '__main__':
     if not os.path.exists(parsed_args.output_dir):
         os.makedirs(parsed_args.output_dir)
     experiment_name = str(parsed_args.model_path).split('/')[-2]
-    """        
-    parsed_args.aux_loss = 0
-    parsed_args.aux_loss_norm = 0
-    if not os.path.exists(parsed_args.output_dir):
-        os.makedirs(parsed_args.output_dir)
-    experiment_name = str(parsed_args.model_path).split('/')[-2]
-    """
-    print('output_dir: ' + str(parsed_args.output_dir))
-    print('experiment_name:%s' % experiment_name)
-    print('log file: ' + str(os.path.join(parsed_args.output_dir, 'out.log')))  # added by @RK
     logging.basicConfig(
         filename=os.path.join(parsed_args.output_dir, 'out.log'),
         format='%(asctime)s %(levelname)s %(module)s-%(lineno)d: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
     )
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    logger.debug('output_dir: ' + str(parsed_args.output_dir))
+    logger.debug('experiment_name:%s' % experiment_name)
+    logger.debug('log file: ' + str(os.path.join(parsed_args.output_dir, 'out.log')))  # added by @RK
     # logger.debug(parsed_args)
     main(parsed_args)

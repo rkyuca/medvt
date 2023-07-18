@@ -64,6 +64,34 @@ we have placed our used backbone's pretrained weights and trained MED-VT models 
 If you are interested in evaluating only, you can download the selected trained med-vt checkpoints from the links in the results table.   
 
 
+# Training 
+
+The models were trained and tested using a single NVIDIA Quadro P6000 24GB GPU.  
+
+> The best checkpoint for automatic video object segmentation is selected based on Davis 2016 dataset. 
+> For this reason, the results on MoCA and YouTube-Objects can be slightly different across different trainings. 
+> Overall, the results in all datasets using this code are better than the ones reported in the paper. 
+> If you find any bugs, which may arise while cleaning up our working codebase to create this repository, 
+> please consider reporting an issue. We will do our best effort to respond as soon as possible.      
+*** 
+
+* Train MED-VT with ResNet backbone on Davis 2016:
+  ```
+  python train_resnet_medvt_avos.py   
+  ```
+
+* Train MED-VT with Swin backbone on Davis 2016:
+  ```
+  python train_swin_medvt_avos.py 
+  ```
+
+* Train MED-VT with swin backbone on A2D:
+
+  ```
+  python train_swin_medvt_a2d.py 
+  ``` 
+
+
 # Inference
 ## MED-VT with Swin backbone
 
@@ -75,7 +103,7 @@ Below are the steps for inference using Swin backbone. For inference using ResNe
 * inference:
    
     ```
-        python -W ignore inference_swin_medvt_avos.py  --model_path ./ckpts/swin_medvt/swin_medvt.pth  --dataset davis --val_size 473 --flip --msc  --output_dir ./outputs/swin_medvt/davis
+        python inference_swin_medvt_avos.py  --model_path ./ckpts/swin_medvt/swin_medvt.pth  --dataset davis --val_size 473 --flip --msc  --output_dir ./outputs/swin_medvt/davis
     ```
     Expected miou: 85.9
 
@@ -90,19 +118,19 @@ Below are the steps for inference using Swin backbone. For inference using ResNe
 ### Inference on YouTube Objects:
 * Use model trained with 6 frames long clips and input size 360px 
     ```
-        python -W ignore inference_swin_medvt_avos.py  --model_path ./ckpts/swin_medvt/swin_medvt.pth  --dataset ytbo --val_size 360 --flip --msc --output_dir ./outputs/swin_medvt/ytbo  
+        python inference_swin_medvt_avos.py  --model_path ./ckpts/swin_medvt/swin_medvt.pth  --dataset ytbo --val_size 360 --flip --msc --output_dir ./outputs/swin_medvt/ytbo  
     ```
 
 ### Inference on MoCA:
 * Use model trained with 6 frames long clips: 
     ```
-        python -W ignore inference_swin_medvt_avos.py  --model_path ./ckpts/swin_medvt/swin_medvt.pth  --dataset moca --val_size 473 --flip  --output_dir ./outputs/swin_medvt/moca   
+        python inference_swin_medvt_avos.py  --model_path ./ckpts/swin_medvt/swin_medvt.pth  --dataset moca --val_size 473 --flip  --output_dir ./outputs/swin_medvt/moca   
     ```
 
 ### Inference of Swin-MEDVT on A2D
 * Use the model trained on A2D following the [download link here](https://drive.google.com/file/d/1tssgI-CLU_JOyqwrIOBH1ryg_kABXvR_/view?usp=sharing) .
 ```
-python -W ignore inference_swin_medvt_a2d.py --backbone swinB --config actor_action/configs/medvt_swin_a2d.yaml --model_path /local/riemann/home/rezaul/projects/video-transformers/ckpts/swin_medvt_a2d/swin_medvt_a2d.pth 
+python  inference_swin_medvt_a2d.py --model_path ./ckpts/swin_medvt_a2d/swin_medvt_a2d.pth  
 ```
 
 Expected actor-action IoU: 56.0
@@ -117,7 +145,7 @@ Following SOTA method, we evaluated both without and with post-processing, e.g. 
 * MED-VT-ResNet inference:
    
 ```
-python -W ignore inference_resnet_medvt_avos.py --model_path ckpts/resnet_medvt/resnet_medvt.pth --lprop_scale 7.2 --dataset davis --val_size 473  --flip --output_dir ./outputs/resnet_medvt/davis  --save --msc
+python inference_resnet_medvt_avos.py --model_path ckpts/resnet_medvt/resnet_medvt.pth --lprop_scale 7.2 --dataset davis --val_size 473  --flip --output_dir ./outputs/resnet_medvt/davis  --save --msc
  ```
 
 Expected IoU: 83.0
@@ -133,14 +161,14 @@ Expected IoU: 83.7
 
 ### MED-VT-ResNet inference on YouTube Objects
 ```
- python -W ignore inference_resnet_medvt_avos.py --model_path ckpts/resnet_medvt/resnet_medvt.pth --lprop_scale 8.0 --dataset ytbo --val_size 360  --flip --msc --output_dir ./outputs/resnet_medvt/ytbo 
+ python inference_resnet_medvt_avos.py --model_path ckpts/resnet_medvt/resnet_medvt.pth --lprop_scale 8.0 --dataset ytbo --val_size 360  --flip --msc --output_dir ./outputs/resnet_medvt/ytbo 
 ```
 
 
 
 ### MED-VT-ResNet inference on MoCA
 ```
- python -W ignore inference_resnet_medvt_avos.py --model_path ckpts/resnet_medvt/resnet_medvt.pth --lprop_scale 7.3 --dataset moca --val_size 473 --flip --output_dir ./outputs/resnet_medvt/moca 
+ python inference_resnet_medvt_avos.py --model_path ckpts/resnet_medvt/resnet_medvt.pth --lprop_scale 7.3 --dataset moca --val_size 473 --flip --output_dir ./outputs/resnet_medvt/moca 
 ```
 
 

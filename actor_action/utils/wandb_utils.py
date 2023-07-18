@@ -2,10 +2,11 @@ import pathlib
 from typing import Optional, Dict, List
 import wandb
 import torch
-import actor_action.util.misc as utils
+import avos.utils.misc as utils
 import numpy as np
 import random
 import copy
+
 
 def init_or_resume_wandb_run(wandb_id_file_path: pathlib.Path,
                              project_name: Optional[str] = None,
@@ -39,6 +40,7 @@ def init_or_resume_wandb_run(wandb_id_file_path: pathlib.Path,
         wandb.config.update(config)
 
     return config
+
 
 def get_viz_img(images: torch.tensor, targets: List[Dict], outputs: Dict[str, torch.tensor],
                 itr, soenet_feats=None):
@@ -89,19 +91,6 @@ def get_viz_img(images: torch.tensor, targets: List[Dict], outputs: Dict[str, to
         viz_cat_img.append(cat_img)
 
     viz_cat_img = np.concatenate(viz_cat_img, axis=0)
-
-    ################### SOENet Feats
-    # TODO: Add SOENET features visualization to the final image
-    max_vals = {}
-    if soenet_feats is not None:
-        for kk in soenet_feats.keys():
-            vv = soenet_feats[kk].tensors.cpu().squeeze(0).permute(0, 2, 3, 1).numpy()
-            vv = normalize_min_max_hw_npy(vv)
-            vv = np.max(vv, axis=3)
-            mx = vv.max()
-            mn = vv.min()
-            vv = (vv - mn) / (abs(mx - mn) + 0.00001)
-            max_vals[kk] = vv
 
     return viz_cat_img
 
@@ -166,18 +155,5 @@ def get_viz_multicls_img(images: torch.tensor, targets: List[Dict], outputs: Dic
         viz_cat_img.append(cat_img)
 
     viz_cat_img = np.concatenate(viz_cat_img, axis=0)
-
-    # ################## SOENet Feats
-    # TODO: Add SOENET features visualization to the final image
-    max_vals = {}
-    if soenet_feats is not None:
-        for kk in soenet_feats.keys():
-            vv = soenet_feats[kk].tensors.cpu().squeeze(0).permute(0, 2, 3, 1).numpy()
-            vv = normalize_min_max_hw_npy(vv)
-            vv = np.max(vv, axis=3)
-            mx = vv.max()
-            mn = vv.min()
-            vv = (vv - mn) / (abs(mx - mn) + 0.00001)
-            max_vals[kk] = vv
 
     return viz_cat_img

@@ -387,7 +387,7 @@ def moca_eval(out_dir='./results/moca', resize=1):
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
     frame_iou_file = os.path.join(out_dir, 'moca_frame_wise_iou.csv')
-    print('frame_iou_file:%s'%frame_iou_file)
+    logger.debug('frame_iou_file:%s'%frame_iou_file)
     # collections.OrderedDict()
     with open(frame_iou_file, 'w') as f:
         cf = csv.writer(f)
@@ -396,7 +396,7 @@ def moca_eval(out_dir='./results/moca', resize=1):
             row = list(vv.values())
             cf.writerow(row)
             mean_iou = np.mean(list(vv.values()))
-            print('video: %s  iou:%0.3f'%(kk, mean_iou))
+            logger.debug('video: %s  iou:%0.3f'%(kk, mean_iou))
             # cf.writerow(video_ious)
     """
     ###########################################
@@ -407,8 +407,6 @@ def moca_eval(out_dir='./results/moca', resize=1):
         info += ': ({:.3f}), '
     info = info.format(Js.avg, success_rates_overall[0], success_rates_overall[1], success_rates_overall[2],
                        success_rates_overall[3], success_rates_overall[4])
-    print('dataset: MoCA result:%s' % info)
-    print('dataset: MoCA mean_iou:%0.3f' % Js.avg)
     logger.debug('dataset: MoCA result:%s' % info)
     logger.debug('dataset: MoCA mean_iou:%0.3f' % Js.avg)
     return Js.avg, info
@@ -467,7 +465,6 @@ def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False,
         _scales = [0.95, 1, 1.05, 1.1, 1.15]  # ResNet 75.2 # Swin 79.1
     else:
         _scales = [1]
-    # print('_scales: '+str(_scales))
     # logger.debug('_scales: '+str(_scales))
     model.eval()
     i_iter = 0
@@ -541,8 +538,6 @@ def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False,
     logger.debug('class_name:%s iou:%0.3f' % (running_video_name, percls_perseq))
     logger.debug('total_masks:%d' % total_mask)
     # ### ### Write the results to CSV ### ###
-    # print('****************************************************************')
-    # print('***************Youtube-Objects Eval Results**********************')
     logger.debug('****************************************************************')
     logger.debug('***************Youtube-Objects Eval Results**********************')
     iou_objs = {}
@@ -552,12 +547,9 @@ def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False,
         iou_objs[obj] = np.mean(list(percls_perseq_iou_dict[obj].values()))
     overall_iou = np.mean(list(iou_objs.values()))
     for obj, obj_iou in iou_objs.items():
-        # print('IoU reported for  %s is %0.3f' % (obj, obj_iou))
         logger.debug('IoU reported for  %s is %0.3f' % (obj, obj_iou))
-    print('Youtube Objects Average IoU : %0.3f' % overall_iou)
     logger.debug('Youtube Objects Average IoU : %0.3f' % overall_iou)
     logger.debug('****************************************************************')
-    # print('****************************************************************')
     # write_youtubeobjects_results_to_csv(out_dir, 'youtube_objects_results.csv', iou_objs)
     # write results to csv
     csv_file_name = 'youtube_objects_results.csv'
@@ -627,7 +619,6 @@ def infer_on_davis(model, data_loader, device, msc=False, flip=False, save_pred=
         if running_video_name is not None and video_name != running_video_name:
             video_iou = np.mean(list(vid_iou_dict[running_video_name].values()))
             logger.debug('video_name:%s iou:%0.3f' % (running_video_name, video_iou))
-            print('video_name:%s iou:%0.3f' % (running_video_name, video_iou))
         running_video_name = video_name
         outputs = compute_predictions_flip_ms(model, samples, targets, gt_shape, ms=msc, ms_gather='mean',
                                               flip=flip, flip_gather='mean', scales=_scales)
@@ -676,7 +667,6 @@ def infer_on_davis(model, data_loader, device, msc=False, flip=False, save_pred=
         cf.writerow(video_names)
         cf.writerow(video_ious)
     logger.debug('Davis Videos Mean IOU: %0.3f' % video_mean_iou)
-    print('Davis Videos Mean IOU: %0.3f' % video_mean_iou)
     return video_mean_iou
 
 
@@ -733,7 +723,7 @@ def run_inference(args, device, model, load_state_dict=True, out_dir=None, video
             raise ValueError('dataset name: %s not implemented' % args.dataset)
 
 
-def inference_on_all_vos_dataset(args, device, model, datasets=None, val_sizes=None, _load_state=True, benchmark=False):
+def inference_on_all_vos_dataset(args, device, model, datasets=None, val_sizes=None, _load_state=True):
     if datasets is None:
         vos_datasets = ['davis', 'ytbo', 'moca']
     else:
@@ -755,9 +745,9 @@ def inference_on_all_vos_dataset(args, device, model, datasets=None, val_sizes=N
         # logger.debug(args)
         logger.debug('Doing inference on best checkpoint')
         logger.debug(f'Inference on {args.dataset} using val_size:{args.val_size} msc:{args.msc} flip:{args.flip}')
-        print('****************************************************************')
-        print(f'Inference on {args.dataset} using val_size:{args.val_size} msc:{args.msc} flip:{args.flip}')
+        logger.debug('****************************************************************')
+        logger.debug(f'Inference on {args.dataset} using val_size:{args.val_size} msc:{args.msc} flip:{args.flip}')
         torch.cuda.empty_cache()
-        run_inference(args, device, model, load_state_dict=_load_state, out_dir=output_dir, benchmark=benchmark)
+        run_inference(args, device, model, load_state_dict=_load_state, out_dir=output_dir)
         torch.cuda.empty_cache()
-        print('****************************************************************')
+        logger.debug('****************************************************************')

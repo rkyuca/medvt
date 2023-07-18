@@ -49,6 +49,7 @@ class Davis16TrainDataset(torch.utils.data.Dataset):
                 frames = sorted(glob.glob(os.path.join(self.davis16_gt_path, video_name, '*.png')))
                 self.frames_info['davis'][video_name] = [frame_path.split('/')[-1][:-4] for frame_path in frames]
                 self.img_ids.extend([('davis', video_name, frame_index) for frame_index in range(len(frames))])
+        # import ipdb;ipdb.set_trace()
         if self.use_ytvos:
             logger.debug('loading ytvos train seqs...')
             video_names = glob.glob(self.ytvos19_gt_path + "/*/")
@@ -72,9 +73,6 @@ class Davis16TrainDataset(torch.utils.data.Dataset):
                                                                 frame_index + math.ceil(float(self.num_frames) / 2), 1)]
         assert len(frame_indices) == self.num_frames
         frame_ids = []
-        for frame_id in frame_indices:
-            frame_name = self.frames_info[dataset][video_name][frame_id]
-            frame_ids.append(frame_name)
         img = []
         masks = []
         mask_paths = []

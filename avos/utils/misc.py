@@ -1,7 +1,7 @@
 """
 Taken from https://github.com/Epiphqny/VisTR
 which was released under the Apache 2.0 license.
-And modified wherever needed.
+And added/modified as needed.
 """
 """
 Misc functions, including distributed helpers.
@@ -23,6 +23,7 @@ import numpy as np
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
 import logging
+import yaml
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -32,6 +33,27 @@ if float(torchvision.__version__[:3]) < 0.7:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
 '''
+
+
+def merge_cfg_args(parsed_args, default_args):
+    default_args = vars(default_args)
+
+    cfgfile = parsed_args.config
+    with open(cfgfile, "r") as yamlfile:
+        data = yaml.safe_load(yamlfile)
+
+    cfg_opts = {}
+    for k, v in data.items():
+        for k1, v1 in v.items():
+            cfg_opts[k1] = v1
+
+    for k, v in default_args.items():
+        if getattr(parsed_args, k) == default_args[k] and k in cfg_opts:
+            # Default values hasnt changed from user, set it to the config value
+            setattr(parsed_args, k, cfg_opts[k])
+
+    return parsed_args
+
 
 class SmoothedValue(object):
     """Track a series of values and provide access to smoothed values over a
