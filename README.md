@@ -1,8 +1,9 @@
-## PyTorch implementation of "MED-VT: Multiscale Encoder-Decoder Video Transformer with Application to Object Segmentation" (CVPR 2023)
+## PyTorch implementation of "MED-VT: Multiscale Encoder-Decoder Video Transformer with Application to Object Segmentation" 
 [Project](https://rkyuca.github.io/medvt/) - [Paper](https://openaccess.thecvf.com/content/CVPR2023/papers/Karim_MED-VT_Multiscale_Encoder-Decoder_Video_Transformer_With_Application_To_Object_Segmentation_CVPR_2023_paper.pdf) - [Supplement](https://openaccess.thecvf.com/content/CVPR2023/supplemental/Karim_MED-VT_Multiscale_Encoder-Decoder_CVPR_2023_supplemental.pdf)
 <hr>
 
-
+# Updates
+We will be updating this repository for MED-VT++ in main branch soon. Previous code for MED-VT (CVPR'23) will be available in branch [medvt](https://github.com/rkyuca/medvt/tree/medvt). 
 
 # Abstract
 Multiscale video transformers have been explored in a wide variety of vision tasks. To date, however, the multiscale processing has been confined to the encoder or decoder alone. We present a unified multiscale encoder-decoder transformer that is focused on dense prediction tasks in videos. Multiscale representation at both encoder and decoder yields key benefits of implicit extraction of spatiotemporal features (i.e. without reliance on input optical flow) as well as temporal consistency at encoding and coarse-to-fine detection for high-level (e.g. object) semantics to guide precise localization at decoding. Moreover, we propose a transductive learning scheme through many-to-many label propagation to provide temporally consistent predictions. We showcase our Multiscale Encoder-Decoder Video Transformer (MED-VT) on Automatic Video Object Segmentation (AVOS) and actor/action segmentation, where we outperform state-of-the-art approaches on multiple benchmarks using only raw images, without using optical flow.
