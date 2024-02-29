@@ -60,7 +60,7 @@ Here is the list of datasets used.
 
 ## Download Trained Models 
 Pretrained ResNet and Swin backbones can be downloaded from their corresponding repository. For convenience to have all in one place, 
-we have placed our used backbone's pretrained weights and trained MED-VT models in a [Google drive folder](https://drive.google.com/drive/folders/1yIXWhSAP-I1WwEzEHzsUkassYWj65Noz?usp=sharing). 
+we have placed our used backbone's pretrained weights [here](https://drive.google.com/drive/folders/18FWrBdiN2o9AxvDhcsRK2HpWCbjmhWkl?usp=drive_link). Our trained MED-VT models are also shared in a [Google drive folder](https://drive.google.com/drive/folders/1yIXWhSAP-I1WwEzEHzsUkassYWj65Noz?usp=sharing). 
 If you are interested in evaluating only, you can download the selected trained med-vt checkpoints from the links in the results table.   
 
 
