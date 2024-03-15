@@ -771,7 +771,7 @@ class SwinTransformer3D(nn.Module):
         # import ipdb; ipdb.set_trace()
         features = []
         for idx, layer in enumerate(self.layers):
-            #import ipdb; ipdb.set_trace()
+            # import ipdb; ipdb.set_trace()
             x = layer(x.contiguous())
             # import ipdb;ipdb.set_trace()
             features.append(x)

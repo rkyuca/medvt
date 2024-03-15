@@ -2,6 +2,7 @@ import os
 import os.path as osp
 import csv
 import mat73
+import numpy as np
 import torch
 import torch.utils.data
 import torchvision
@@ -60,13 +61,35 @@ def read_mask(file_name):
     return anot_parsed
 
 
-
 def make_transform(size=360):
     transform = torch.nn.Sequential(
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     )
     return transform
 
+
+class A2DColorMap:
+    def __init__(self):
+        super().__init__()
+        from actor_action.datasets.path_config import a2d_color_map_path
+        self.class_id_path = a2d_color_map_path
+
+        id_to_names = ['None'] * 80
+        id_to_palletes = [[0, 0, 0]] * 80
+        # import ipdb;ipdb.set_trace()
+        with open(self.class_id_path, 'r') as f:
+            lines = f.readlines()[1:]
+
+            for line in lines:
+                toks = line.split()
+                name = toks[0]
+                id = int(toks[1])
+                colors = list(map(int, toks[3:]))
+                id_to_names[id] = name
+                id_to_palletes[id] = colors
+        # import ipdb;ipdb.set_trace()
+        self.classes = id_to_names
+        self.palette = np.asarray(id_to_palletes)
 
 
 class A2dDatasetTest(torch.utils.data.Dataset):
@@ -91,16 +114,17 @@ class A2dDatasetTest(torch.utils.data.Dataset):
         # self.gt_transform = make_gt_transform()
         assert osp.exists(self.frame_path)
         assert osp.exists(self.gt_path)
-        
+
         self.new_data = []
         "Find all gt files of self.data"
         for vid_id, vid_cls, _, _, vid_frames_cnt, _ in self.data:
             gt_files = os.listdir(
                 osp.join(self.gt_path, vid_id)
             )
-            
+
             for gt_file in gt_files:
                 self.new_data.append([vid_id, vid_cls, vid_frames_cnt, gt_file])
+        # ##### Added for color map
 
     def __len__(self):
         return len(self.new_data)
@@ -111,11 +135,8 @@ class A2dDatasetTest(torch.utils.data.Dataset):
         vid_frames_cnt = int(vid_frames_cnt)
 
         "The critical difference between train-set and test-set is looping through all gt files"
-        gt_img = read_mask(
-            osp.join(
-                self.gt_path, vid_id, gt_file
-            )
-        )
+        gt_path = osp.join(self.gt_path, vid_id, gt_file)
+        gt_img = read_mask(gt_path)
 
         # Select frames centered aroud the ground-truth id
         gt_id = int(gt_file.split('.')[0])
@@ -128,25 +149,25 @@ class A2dDatasetTest(torch.utils.data.Dataset):
             start_id, end_id = gt_id - self.context_length, gt_id
             gt_index = -1
         else:
-            start_id, end_id = gt_id - self.context_length, gt_id + self.context_length # So the 3rd frame is the center frame!!!
+            start_id, end_id = gt_id - self.context_length, gt_id + self.context_length  # So the 3rd frame is the center frame!!!
             gt_index = 3
 
+        # import ipdb;ipdb.set_trace()
         # Load img sequences
-        img_tensors = torch.stack([torchvision.io.read_image(
-            osp.join(
-                self.frame_path, vid_id, '{:05d}.png'.format(idx))) for idx in range(start_id, end_id)
-        ], 0) / 255.0
+        img_paths = [osp.join(self.frame_path, vid_id, '{:05d}.png'.format(idx)) for idx in range(start_id, end_id)]
+        img_tensors = torch.stack([torchvision.io.read_image(img_path) for img_path in img_paths], 0) / 255.0
 
         # run the transform
         # import ipdb; ipdb.set_trace()
         img_tensors = self.transform(img_tensors.float())
         img_tensors = interpolate(img_tensors.float(), size=(320, 480), mode='bilinear')
         img_tensors = img_tensors.permute(2, 3, 0, 1).flatten(2).permute(2, 0, 1)
- 
+
         # import ipdb; ipdb.set_trace()
         # img_tensors = img_tensors.view(-1, 320, 480)
         gt_tensor = torch.from_numpy(gt_img).float().unsqueeze(0).unsqueeze(0)
         # Return
-        return img_tensors, torch.tensor(int(vid_cls), dtype=torch.int8), gt_tensor, vid_id, gt_index
 
+        target_img_path = img_paths[gt_index]
 
+        return img_tensors, torch.tensor(int(vid_cls), dtype=torch.int8), gt_tensor, vid_id, gt_index, target_img_path, gt_path

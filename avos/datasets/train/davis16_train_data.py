@@ -125,8 +125,8 @@ class Davis16TrainDataset(torch.utils.data.Dataset):
                     flow = bkd_flow
                 else:
                     skip_current_sample_flow=True
-                    logger.debug('Flow not found for fwd_flow_file: : '+fwd_flow_file)
-                    logger.debug('Flow not found for bkd_flow_file: '+bkd_flow_file)
+                    # logger.debug('Flow not found for fwd_flow_file: : '+fwd_flow_file)
+                    # logger.debug('Flow not found for bkd_flow_file: '+bkd_flow_file)
                     flow = None
                     # raise Exception('Flow file not found for :%s-%s' % (video_name, frame_name))
                 flows.append(flow)
@@ -160,7 +160,7 @@ def make_train_transform(train_size=None):
         T.PhotometricDistort(),
         T.Compose([
             T.RandomResize([500, 600, 700]),
-            T.RandomSizeCrop(473, 750),
+            T.RandomSizeCrop(480, 750),
             T.RandomResize([train_size], max_size=int(1.8 * train_size)),
         ]),
         normalize,

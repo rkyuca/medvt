@@ -15,10 +15,12 @@ from torch.utils.data import DataLoader
 
 import avos.utils as utils
 import avos.utils.misc
+from avos.utils.misc import NestedTensor
 from avos.datasets.test.davis16_val_data import Davis16ValDataset as Davis16ValDataset
 from avos.datasets.test.moca import MoCADataset
 from avos.datasets.test.youtube_objects import YouTubeObjects
 from avos.datasets import path_config as dataset_path_config
+from avos.visual.overlay import create_overlay
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -58,17 +60,18 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def compute_predictions_flip_ms(model, samples, targets, gt_shape, ms=True, ms_gather='mean', flip=True,
+def compute_predictions_flip_ms(model, samples, gt_shape, flows=None, ms=True, ms_gather='mean', flip=True,
                                 flip_gather='mean', scales=None, sigmoid=True):
     # import ipdb;ipdb.set_trace()
-    outputs = compute_predictions_ms(model, samples, targets, gt_shape, ms=ms, ms_gather=ms_gather,
+    outputs = compute_predictions_ms(model, samples, flows, gt_shape, ms=ms, ms_gather=ms_gather,
                                      scales=scales, sigmoid=sigmoid)
     outputs['pred_masks'] = utils.misc.interpolate(outputs['pred_masks'], size=gt_shape, mode="bilinear",
                                                    align_corners=False)
     if flip:
-        samples_flipped, targets_flipped = augment_flip(samples, targets)
+        # print('using flip')
+        samples_flipped, flows_flipped = augment_flip(samples, flows)
 
-        outputs_flipped = compute_predictions_ms(model, samples_flipped, targets_flipped, gt_shape, ms=ms,
+        outputs_flipped = compute_predictions_ms(model, samples_flipped, flows_flipped, gt_shape, ms=ms,
                                                  ms_gather=ms_gather, scales=scales)
         outputs_flipped['pred_masks'] = utils.misc.interpolate(outputs_flipped['pred_masks'], size=gt_shape,
                                                                mode="bilinear", align_corners=False)
@@ -79,7 +82,7 @@ def compute_predictions_flip_ms(model, samples, targets, gt_shape, ms=True, ms_g
     return outputs
 
 
-def compute_predictions_ms(model, samples, targets, gt_shape, ms=True, ms_gather='mean',
+def compute_predictions_ms(model, samples, flows, gt_shape, ms=True, ms_gather='mean',
                            scales=None, sigmoid=True):
     if scales is None:
         scales = [1]
@@ -90,14 +93,18 @@ def compute_predictions_ms(model, samples, targets, gt_shape, ms=True, ms_gather
         size = [int(val * scale) for val in org_shape]
         tensors = samples.tensors
         mask = samples.mask
+        flow_tensor = None
         if scale != 1:
             tensors = utils.misc.interpolate(tensors, size=size, mode="bilinear", align_corners=False)
             mask = utils.misc.interpolate(mask.unsqueeze(1).long().float(), size=size, mode="nearest").squeeze(1)
             mask[mask > 0.5] = True
             mask[mask <= 0.5] = False
             mask = mask.bool()
+        if flows is not None:
+            flow_tensor = utils.misc.interpolate(flows, size=size, mode="bilinear", align_corners=False)
         ms_sample = utils.misc.NestedTensor(tensors, mask)
-        model_output = model(ms_sample)
+        with torch.no_grad():
+            model_output = model(ms_sample, flows=flow_tensor)
         pred = utils.misc.interpolate(model_output['pred_masks'], size=gt_shape, mode="bilinear", align_corners=False)
         if sigmoid:
             pred = pred.sigmoid()
@@ -113,14 +120,14 @@ def compute_predictions_ms(model, samples, targets, gt_shape, ms=True, ms_gather
         output_result = {'pred_masks': mask_list[0]}
     return output_result
 
-
-def augment_flip(samples, targets, dim=-1):
-    samples.tensors = samples.tensors.flip(dim)
-    samples.mask = samples.mask.flip(dim)
-    # import ipdb;ipdb.set_trace()
-    if 'flows' in targets[0]:
-        targets[0]['flows'] = targets[0]['flows'].flip(dim)
-    return samples, targets
+def augment_flip(samples, flows, dim=-1):
+    tensors = samples.tensors.clone().detach().flip(dim)
+    mask = samples.mask.clone().detach().flip(dim)
+    samples_flipped = NestedTensor(tensors, mask)
+    flows_flipped = None
+    if flows is not None:
+        flows_flipped = flows.clone().detach().flip(dim)
+    return samples_flipped, flows_flipped
 
 
 def moca_read_annotation(annotation):
@@ -254,7 +261,9 @@ def moca_eval(out_dir='./results/moca', resize=1):
             image = np.array(cv2.imread(os.path.join(moca_dataset_path, video, '{:05d}.jpg'.format(0))))
             H, W, _ = image.shape
         for ff in range(n_frames):
-            number = str(ff).zfill(5)
+            # import ipdb;ipdb.set_trace()
+            number = res_list[ff].split('/')[-1].split('.')[0]
+            # number = str(ff).zfill(5)
             if number in annotations[video]:
                 # get annotation
                 motion = annotations[video][number]['motion']
@@ -415,12 +424,13 @@ def moca_eval(out_dir='./results/moca', resize=1):
 def moca_infer(model, data_loader, device, msc=False, flip=False, save_pred=False, out_dir='./results/moca/',
                videos=None):
     # import ipdb;ipdb.set_trace()
-    msc = False  # #TODO check, msc did not improve here.
+    # msc = False  # #TODO check, msc did not improve here.
     if msc:
-        # _scales = # [0.7, 0.8, 0.9, 1, 1.1, 1.2]
-        _scales = [1.0]  # [1.0, 1.05, 1.1]
+        # _scales = [0.7, 0.8, 0.9, 1, 1.1, 1.2]
+        _scales = [0.9, 0.95, 1.0, 1.05, 1.1]
     else:
         _scales = [1]
+    logger.debug('using scales: %s'%str(_scales))
     model.eval()
     i_iter = 0
     moca_csv = dataset_path_config.moca_annotations_csv
@@ -440,7 +450,7 @@ def moca_infer(model, data_loader, device, msc=False, flip=False, save_pred=Fals
         samples = samples.to(device)
         targets = [{k: v.to(device) if k in ['masks'] else v for k, v in t.items()} for t in targets]
         gt_shape = samples.tensors.shape[-2:]
-        outputs = compute_predictions_flip_ms(model, samples, targets, gt_shape, ms=msc, ms_gather='mean',
+        outputs = compute_predictions_flip_ms(model, samples, gt_shape, flows=None, ms=msc, ms_gather='mean',
                                               flip=flip, flip_gather='max',
                                               scales=_scales)
         src_masks = outputs["pred_masks"]
@@ -459,7 +469,7 @@ def moca_infer(model, data_loader, device, msc=False, flip=False, save_pred=Fals
 
 
 @torch.no_grad()
-def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False, save_pred=False,
+def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False, save_pred=False, save_gt_overlay=False,
                               out_dir='./results/youtube_objects/'):
     if msc:
         _scales = [0.95, 1, 1.05, 1.1, 1.15]  # ResNet 75.2 # Swin 79.1
@@ -512,7 +522,7 @@ def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False,
         mask[mask >= th_mask] = 1
         th_pred = 0.5  # 110.0 / 255.0  # 110 / 255.0
         torch.cuda.empty_cache()
-        outputs = compute_predictions_flip_ms(model, samples, targets, gt_shape, ms=msc, ms_gather='mean',
+        outputs = compute_predictions_flip_ms(model, samples, gt_shape, flows=None, ms=msc, ms_gather='mean',
                                               flip=flip, flip_gather='max', scales=_scales)
         torch.cuda.empty_cache()
         src_masks = outputs["pred_masks"]
@@ -525,6 +535,7 @@ def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False,
         iou = eval_iou(mask.copy(), out.copy())
         percls_perseq_iou_dict[object_][seq_name] += iou
         num_iou_dict[object_][seq_name] += 1
+        """
         if save_pred:
             pred_out_dir = os.path.join(out_dir, '/'.join(
                 mask_dir.split('/')[-5:]))  # this one follows the same dir struck as gt
@@ -532,6 +543,56 @@ def infer_ytbobj_perseqpercls(model, data_loader, device, msc=False, flip=False,
                 os.makedirs(pred_out_dir)
             cv2.imwrite(os.path.join(pred_out_dir, '%s.png' % center_frame_name),
                         out.astype(np.float32) * 255)  # it was 0, 1
+        """
+        if save_pred:
+            # # Save logits ##########################
+            logits_out_dir = os.path.join(out_dir,'logits', '/'.join(
+                mask_dir.split('/')[-5:]))  # this one follows the same dir struck as gt
+            if not os.path.exists(logits_out_dir):
+                os.makedirs(logits_out_dir)
+            cv2.imwrite(os.path.join(logits_out_dir, '%s.png' % center_frame_name),
+                        (yc_logits.astype(np.float32) * 255).astype(np.uint8))
+            # # Save binary masks ####################################
+            bm_out_dir = os.path.join(out_dir,'bin_mask', '/'.join(
+                mask_dir.split('/')[-5:]))  # this one follows the same dir struck as gt
+            if not os.path.exists(bm_out_dir):
+                os.makedirs(bm_out_dir)
+            cv2.imwrite(os.path.join(bm_out_dir, '%s.png' % center_frame_name),
+                        (out.astype(np.float32) * 255).astype(np.uint8))  # it is 0, 1
+            # # Save overlay ###############################
+            # import ipdb;ipdb.set_trace()
+            overlay_mask = (out.copy().astype(np.float32)* 255).astype(np.uint8)
+            if overlay_mask.max() > 1:
+                overlay_mask[overlay_mask > 100] = 255
+                overlay_mask[overlay_mask <= 100] = 0
+            center_img_path = targets[0]['img_paths'][center_frame_index]
+            center_img = cv2.imread(center_img_path)
+            if overlay_mask.shape[0]!=center_img.shape[0] or overlay_mask.shape[1]!=center_img.shape[1]:
+                center_img = cv2.resize(center_img, overlay_mask.shape[::-1])
+            overlay = create_overlay(center_img, overlay_mask, [0, 255])
+            overlay_out_dir = os.path.join(out_dir,'overlay', '/'.join(
+                mask_dir.split('/')[-5:]))  # this one follows the same dir struck as gt
+            if not os.path.exists(overlay_out_dir):
+                os.makedirs(overlay_out_dir)
+            cv2.imwrite(os.path.join(overlay_out_dir, '%s.png' % center_frame_name),overlay)
+
+        if save_gt_overlay:
+            # import ipdb;ipdb.set_trace()
+            overlay_mask = (mask.copy().astype(np.float32)* 255).astype(np.uint8)
+            if overlay_mask.max() > 1:
+                overlay_mask[overlay_mask > 100] = 255
+                overlay_mask[overlay_mask <= 100] = 0
+            center_img_path = targets[0]['img_paths'][center_frame_index]
+            center_img = cv2.imread(center_img_path)
+            if overlay_mask.shape[0]!=center_img.shape[0] or overlay_mask.shape[1]!=center_img.shape[1]:
+                center_img = cv2.resize(center_img, overlay_mask.shape[::-1])
+            overlay = create_overlay(center_img, overlay_mask, [0, 255])
+            overlay_out_dir = os.path.join(out_dir,'gt_overlay', '/'.join(
+                mask_dir.split('/')[-5:]))  # this one follows the same dir struck as gt
+            if not os.path.exists(overlay_out_dir):
+                os.makedirs(overlay_out_dir)
+            cv2.imwrite(os.path.join(overlay_out_dir, '%s.png' % center_frame_name),overlay)
+
     percls_perseq = np.mean([seq_sum / count for seq_sum, count in
                              zip(percls_perseq_iou_dict[running_video_name].values(),
                                  num_iou_dict[running_video_name].values())])
@@ -610,7 +671,12 @@ def infer_on_davis(model, data_loader, device, msc=False, flip=False, save_pred=
         center_frame_name = targets[0]['center_frame']
         center_frame_index = frame_ids.index(center_frame_name)
         samples = samples.to(device)
-        targets = [{k: v.to(device) if k in ['masks'] else v for k, v in t.items()} for t in targets]
+        targets = [{k: v.to(device) if k in ['masks','flows'] else v for k, v in t.items()} for t in targets]
+        # import ipdb;ipdb.set_trace()
+        flows = None
+        if 'flows' in targets[0]:
+            flows = torch.stack([ t['flows'] for t in targets ]).squeeze(0)
+            # print('received flow...')
         # ###############################################
         center_gt_path = targets[0]['mask_paths'][center_frame_index]
         center_gt = cv2.imread(center_gt_path, cv2.IMREAD_GRAYSCALE)
@@ -620,7 +686,7 @@ def infer_on_davis(model, data_loader, device, msc=False, flip=False, save_pred=
             video_iou = np.mean(list(vid_iou_dict[running_video_name].values()))
             logger.debug('video_name:%s iou:%0.3f' % (running_video_name, video_iou))
         running_video_name = video_name
-        outputs = compute_predictions_flip_ms(model, samples, targets, gt_shape, ms=msc, ms_gather='mean',
+        outputs = compute_predictions_flip_ms(model, samples, gt_shape, flows=flows,  ms=msc, ms_gather='mean',
                                               flip=flip, flip_gather='mean', scales=_scales)
         # import ipdb; ipdb.set_trace()
         src_masks = outputs["pred_masks"]
@@ -646,6 +712,19 @@ def infer_on_davis(model, data_loader, device, msc=False, flip=False, save_pred=
                 os.makedirs(bm_out_dir)
             cv2.imwrite(os.path.join(bm_out_dir, '%s.png' % center_frame_name),
                         (out.astype(np.float32) * 255).astype(np.uint8))  # it is 0, 1
+            # ### save overlay
+            overlay_mask = (out.copy().astype(np.float32)* 255).astype(np.uint8)
+            if overlay_mask.max() > 1:
+                overlay_mask[overlay_mask > 100] = 255
+                overlay_mask[overlay_mask <= 100] = 0
+            center_img_path = targets[0]['img_paths'][center_frame_index]
+            center_img = cv2.imread(center_img_path)
+            overlay = create_overlay(center_img, overlay_mask, [0, 255])
+            overlay_out_dir = os.path.join(out_dir, 'overlay', video_name)
+            if not os.path.exists(overlay_out_dir):
+                os.makedirs(overlay_out_dir)
+            cv2.imwrite(os.path.join(overlay_out_dir, '%s.png' % center_frame_name),overlay)
+
     video_iou = np.mean(list(vid_iou_dict[running_video_name].values()))
     logger.debug('video_name:%s iou:%0.3f' % (running_video_name, video_iou))
     video_mean_iou = np.mean([np.mean(list(vid_iou_f.values())) for _, vid_iou_f in vid_iou_dict.items()])
@@ -684,17 +763,34 @@ def run_inference(args, device, model, load_state_dict=True, out_dir=None, video
         args.msc = False
     if not hasattr(args, 'flip'):
         args.flip = False
+    if not hasattr(args, 'style'):
+        args.style = None
+    if not hasattr(args, 'perturb'):
+        args.perturb = 'none'
+    if not hasattr(args, 'sampling_stride'):
+        args.sampling_stride = 1
+    if not hasattr(args,'save_gt_overlay'):
+        args.save_gt_overlay=False
+
+    if hasattr(args,'davis_input_max_sc') and args.msc:
+        davis_max_sc = args.davis_input_max_sc
+    else :
+        davis_max_sc = None
+
 
     if args.dataset == 'davis':
         dataset_val = Davis16ValDataset(num_frames=args.num_frames, val_size=args.val_size,
                                         sequence_names=args.sequence_names,
-                                        max_sc=args.davis_input_max_sc if hasattr(args,
-                                                                                  'davis_input_max_sc') and args.msc else None)
+                                        max_sc=davis_max_sc, style=args.style,
+                                        use_flow=args.use_flow)
     elif args.dataset == 'moca':
         dataset_val = MoCADataset(num_frames=args.num_frames, min_size=args.val_size,
-                                  sequence_names=args.sequence_names)
+                                  sequence_names=args.sequence_names, perturb=args.perturb,
+                                  sampling_stride=args.sampling_stride,
+                                  use_flow=args.use_flow)
     elif args.dataset == 'ytbo':
-        dataset_val = YouTubeObjects(num_frames=args.num_frames, min_size=args.val_size)
+        dataset_val = YouTubeObjects(num_frames=args.num_frames, min_size=args.val_size,
+                                     use_flow=args.use_flow)
     else:
         raise ValueError('Dataset not implemented')
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
@@ -705,6 +801,7 @@ def run_inference(args, device, model, load_state_dict=True, out_dir=None, video
         if load_state_dict:
             state_dict = torch.load(args.model_path)['model']
             model.load_state_dict(state_dict, strict=True)
+            logger.debug('model checkpoint loaded ...')
         model.eval()
         # import ipdb;ipdb.set_trace()
         if args.dataset == 'moca':
@@ -713,7 +810,7 @@ def run_inference(args, device, model, load_state_dict=True, out_dir=None, video
             moca_eval(out_dir=out_dir, resize=1)
         elif args.dataset == 'ytbo':
             infer_ytbobj_perseqpercls(model, data_loader_val, device, msc=args.msc, flip=args.flip,
-                                      save_pred=args.save_pred,
+                                      save_pred=args.save_pred,save_gt_overlay=args.save_gt_overlay,
                                       out_dir=out_dir)
         elif args.dataset == 'davis':
             infer_on_davis(model, data_loader_val, device, msc=args.msc, flip=args.flip,

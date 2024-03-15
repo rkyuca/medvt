@@ -30,7 +30,6 @@ def dice_loss(inputs, targets):
     numerator = 2 * (inputs * targets).sum(1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
-
     return loss.sum()
     # return 5*torch.log(torch.cosh(loss)).sum()
 

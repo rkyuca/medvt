@@ -13,16 +13,14 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from torchvision.models._utils import IntermediateLayerGetter
 from typing import Dict, List
-import math
 import logging
-
 from avos.utils.misc import is_main_process
 from avos.utils.misc import (NestedTensor, nested_tensor_from_tensor_list)
 from avos.models import criterions
 from avos.models.label_propagation import LabelPropagator
-from avos.models.medvt_swin import MHAttentionMap
 from avos.models.position_encoding import build_position_encoding
-from avos.models.utils import conv3x3, get_clones, get_activation_fn, expand
+from avos.models.utils import get_clones, get_activation_fn, expand
+from avos.models.mh_attention_map import MHAttentionMap
 
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
@@ -706,7 +704,7 @@ class MEDVT(nn.Module):
             hs_f = hs[-1][:, i * n_f:(i + 1) * n_f, :]
             memory_f = hr_feat[i, :, :, :].reshape(bs_f, c2, h2, w2)
             mask_f = features[0].mask[i, :, :].reshape(bs_f, h2, w2)
-            obj_attn_mask_f = self.bbox_attention(hs_f, memory_f, mask=mask_f)
+            obj_attn_mask_f = self.bbox_attention(hs_f, memory_f, mask=mask_f).flatten(0, 1)
             obj_attn_masks.append(obj_attn_mask_f)
         obj_attn_masks = torch.cat(obj_attn_masks, dim=0)
         seg_feats = torch.cat([hr_feat, obj_attn_masks], dim=1)
@@ -721,7 +719,7 @@ class MEDVT(nn.Module):
 class MEDVT_LPROP(MEDVT):
     def __init__(self, args, vistr, freeze_vistr=False,
                  pretrain_settings={}, lprop_mode=None, temporal_strides=[1], feat_loc=None, stacked=1, n_class=1):
-        super().__init__(vistr, freeze_vistr)
+        super().__init__(vistr, freeze_vistr, n_class=n_class)
         # import ipdb; ipdb.set_trace()
         logger.debug('Building model -> MEDVT_LPROP')
         self.stacked = stacked
@@ -815,7 +813,6 @@ class MEDVT_LPROP(MEDVT):
             obj_attn_mask_f = self.bbox_attention(hs_f, memory_f, mask=mask_f).flatten(0, 1)
             obj_attn_masks.append(obj_attn_mask_f)
         obj_attn_masks = torch.cat(obj_attn_masks, dim=0)
-
         seg_feats = torch.cat([hr_feat, obj_attn_masks], dim=1)
         mask_ins = seg_feats.unsqueeze(0).permute(0, 2, 1, 3, 4)
         outputs_seg_masks = self.insmask_head(mask_ins)
@@ -854,7 +851,7 @@ def initi_pretrained_weights(args, model):
     model_keys = model.state_dict().keys()
     # import ipdb;
     # ipdb.set_trace()
-    if args.dec_layers > 6:
+    if args.dec_layers > 6 and not args.finetune:
         cks = [k for k in checkpoint.keys() if 'vistr.transformer.decoder.layers.5.' in k]
         for i in range(6, args.dec_layers):
             for ck in cks:
@@ -894,7 +891,7 @@ def initi_pretrained_weights(args, model):
     model.load_state_dict(checkpoint, strict=False)
 
 
-def build_model(args):
+def build_model_without_criterion(args):
     if type(args.enc_layers) in [list, tuple]:
         args.enc_layers = sum(args.enc_layers)
 
@@ -932,6 +929,10 @@ def build_model(args):
     else:
         model = MEDVT(vistr, n_class=args.num_classes)
     ####################################################################################
+    return model
+
+def build_model(args):
+    model = build_model_without_criterion(args)
     if args.is_train and hasattr(args, 'resnet101_coco_weights_path') and args.resnet101_coco_weights_path is not None:
         initi_pretrained_weights(args, model)
     ###########################################################################################

@@ -12,6 +12,7 @@ imageio
 scikit-image
 einops
 ipdb
-wandb
+resampy
+soundfile
 
 

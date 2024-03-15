@@ -147,7 +147,7 @@ class A2dDataset(torch.utils.data.Dataset):
         img_tensors = self.transform(img_tensors.float())
 
         # Transform image to fixed size for now
-        img_tensors = interpolate(img_tensors.float(), size=(320, 480), mode='bilinear', align_corners=True)
+        img_tensors = interpolate(img_tensors.float(), size=(320, 480), mode='bilinear')
         if self.train:
             gt_tensor = interpolate(torch.from_numpy(gt_img).float().unsqueeze(0).unsqueeze(0), size=(320, 480))
         else:
@@ -156,7 +156,6 @@ class A2dDataset(torch.utils.data.Dataset):
         # Return
         return img_tensors.view(-1, 320, 480), torch.tensor(int(vid_cls), dtype=torch.int8), gt_tensor, vid_id, gt_index
 
-
 class DebugA2dDataset(torch.utils.data.Dataset):
     def __init__(self, csv_path) -> None:
         super().__init__()
@@ -164,7 +163,6 @@ class DebugA2dDataset(torch.utils.data.Dataset):
 
     def forward(self):
         pass
-
 
 if __name__ == '__main__':
     dataset = A2dDataset(

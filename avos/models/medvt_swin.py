@@ -18,6 +18,7 @@ from avos.models.swin_transformer_3d import SwinTransformer3D
 from avos.utils.misc import (NestedTensor, nested_tensor_from_tensor_list)
 from avos.models.label_propagation import LabelPropagator
 from avos.models.position_encoding import build_position_encoding
+from avos.models.mh_attention_map import MHAttentionMap, MHAttentionMapTube
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -57,13 +58,14 @@ class MaskHeadSmallConv(nn.Module):
 
     def forward(self, x: Tensor, fpns: List[Tensor]):
         multi_scale_features = []
+        multi_scale_features.append(x)
         x = self.lay1(x)
         x = self.gn1(x)
         x = F.relu(x)
         x = self.lay2(x)
         x = self.gn2(x)
         x = F.relu(x)
-        multi_scale_features.append(x)
+        # multi_scale_features.append(x)
 
         cur_fpn = fpns[0]
         if cur_fpn.size(0) != x.size(0):
@@ -96,35 +98,8 @@ class MaskHeadSmallConv(nn.Module):
         return multi_scale_features
 
 
-class MHAttentionMap(nn.Module):
-    """This is a 2D attention module, which only returns the attention softmax (no multiplication by value)"""
 
-    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0.0, bias=True):
-        super().__init__()
-        self.num_heads = num_heads
-        self.hidden_dim = hidden_dim
-        self.dropout = nn.Dropout(dropout)
 
-        self.q_linear = nn.Linear(query_dim, hidden_dim, bias=bias)
-        self.k_linear = nn.Linear(query_dim, hidden_dim, bias=bias)
-
-        nn.init.zeros_(self.k_linear.bias)
-        nn.init.zeros_(self.q_linear.bias)
-        nn.init.xavier_uniform_(self.k_linear.weight)
-        nn.init.xavier_uniform_(self.q_linear.weight)
-        self.normalize_fact = float(hidden_dim / self.num_heads) ** -0.5
-
-    def forward(self, q, k, mask=None):
-        q = self.q_linear(q)
-        k = F.conv2d(k, self.k_linear.weight.unsqueeze(-1).unsqueeze(-1), self.k_linear.bias)
-        qh = q.view(q.shape[0], q.shape[1], self.num_heads, self.hidden_dim // self.num_heads)
-        kh = k.view(k.shape[0], self.num_heads, self.hidden_dim // self.num_heads, k.shape[-2], k.shape[-1])
-        weights = torch.einsum("bqnc,bnchw->bqnhw", qh * self.normalize_fact, kh)
-        if mask is not None:
-            weights.masked_fill_(mask.unsqueeze(1).unsqueeze(1), float("-inf"))
-        weights = F.softmax(weights.flatten(2), dim=-1).view_as(weights)
-        weights = self.dropout(weights)
-        return weights
 
 
 class Transformer(nn.Module):
@@ -138,8 +113,10 @@ class Transformer(nn.Module):
                  return_intermediate_dec=False,
                  bbox_nhead=8,
                  encoder_cross_layer=False,
-                 decoder_multiscale=True,
-                 decoder_attn_fuse='cat'):
+                 query_decoder_scales=3,
+                 decoder_attn_fuse='cat',
+                 decoder_bbox_head='frame',
+                 ):
         """
         Args:
             num_frames:
@@ -156,7 +133,7 @@ class Transformer(nn.Module):
             return_intermediate_dec:
             bbox_nhead:
             encoder_cross_layer:
-            decoder_multiscale:
+            query_decoder_scales:
             decoder_attn_fuse: 'cat', one of 'add'/'cat'
         """
         super().__init__()
@@ -167,7 +144,7 @@ class Transformer(nn.Module):
         self.num_encoder_layers = [num_encoder_layer if type(num_encoder_layer) is int else int(num_encoder_layer) for
                                    num_encoder_layer in num_encoder_layers]
         self.num_decoder_queries = num_decoder_queries
-        self.decoder_multiscale = decoder_multiscale
+        self.query_decoder_scales = query_decoder_scales
         self.backbone_dims = backbone_dims
         self.num_backbone_feats = len(backbone_dims)
         self.num_frames = num_frames
@@ -177,6 +154,7 @@ class Transformer(nn.Module):
         self.use_decoder = num_decoder_layers > 0
         self.decoder_attn_fuse = decoder_attn_fuse
         self.bbox_nhead = bbox_nhead
+        self.decoder_bbox_head = decoder_bbox_head
 
         if self.num_encoder_stages == 1 and encoder_cross_layer:
             self.num_encoder_stages = 2
@@ -190,20 +168,25 @@ class Transformer(nn.Module):
                                               cross_pos='cascade')
 
         if num_decoder_layers > 0:
-            self.query_embed = nn.Embedding(num_decoder_queries, d_model)
+            if decoder_bbox_head == 'tube':
+                self.query_embed = nn.Embedding(bbox_nhead, d_model)
+
+                self.bbox_attention = MHAttentionMapTube(d_model, d_model, bbox_nhead, dropout=0.0)
+            else:
+                self.query_embed = nn.Embedding(num_decoder_queries, d_model)
+                self.bbox_attention = MHAttentionMap(d_model, d_model, bbox_nhead, dropout=0.0)
             decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before)
             decoder_norm = nn.LayerNorm(d_model)
             self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
                                               return_intermediate=return_intermediate_dec)
-            self.bbox_attention = MHAttentionMap(d_model, d_model, bbox_nhead, dropout=0.0)
             if self.decoder_attn_fuse is not None and self.decoder_attn_fuse == 'add':
                 self.bbox_sal_adapter = nn.Sequential(nn.Conv2d(bbox_nhead, d_model, kernel_size=1))
 
-        if num_decoder_layers > 0 and not self.decoder_multiscale:
-            self.fpn = MaskHeadSmallConv(dim=d_model + 8, context_dim=d_model)
-        else:
-            self.fpn = MaskHeadSmallConv(dim=d_model, context_dim=d_model)
+         # if num_decoder_layers > 0: # and not self.decoder_multiscale:
+        #    self.fpn = MaskHeadSmallConv(dim=d_model + 8, context_dim=d_model)
+        #else:
+        self.fpn = MaskHeadSmallConv(dim=d_model, context_dim=d_model)
 
         self.d_model = d_model
         self.nhead = nhead
@@ -284,7 +267,8 @@ class Transformer(nn.Module):
         ###################################################################
         # import ipdb; ipdb.set_trace()
         if self.use_decoder:
-            if self.decoder_multiscale:
+            use_fpn_before_query_decoder = True
+            if use_fpn_before_query_decoder :
                 ms_feats = self.fpn(deep_feature, fpn_features)
                 hr_feat = ms_feats[-1]
 
@@ -292,7 +276,7 @@ class Transformer(nn.Module):
                 pos_embed_list = []
                 size_list = []
                 dec_mask_list = []
-                for i in range(3):
+                for i in range(self.query_decoder_scales):
                     fi = ms_feats[i]
                     ni, ci, hi, wi = fi.shape
                     fi = fi.reshape(bs_f, self.num_frames, ci, hi, wi).permute(0, 2, 1, 3, 4).flatten(-2).flatten(
@@ -304,26 +288,33 @@ class Transformer(nn.Module):
                     pos_embed_list.append(pe)
                     size_list.append((hi, wi))
                     dec_mask_list.append(dec_mask_i)
-
-                query_embed = self.query_embed.weight
-                query_embed = query_embed.unsqueeze(1)
-                tq, bq, cq = query_embed.shape
-                query_embed = query_embed.repeat(self.num_frames // tq, bs_f, 1)
-
+                if self.decoder_bbox_head == 'tube':
+                    query_embed = self.query_embed.weight
+                    query_embed = query_embed.unsqueeze(1)
+                else:
+                    query_embed = self.query_embed.weight
+                    query_embed = query_embed.unsqueeze(1)
+                    tq, bq, cq = query_embed.shape
+                    query_embed = query_embed.repeat(self.num_frames // tq, bs_f, 1)
                 tgt = torch.zeros_like(query_embed)
                 hs = self.decoder(tgt, dec_features, memory_key_padding_mask=dec_mask_list,
                                   pos=pos_embed_list, query_pos=query_embed, size_list=size_list)
                 hs = hs.transpose(1, 2)
-                n_f = 1 if self.num_decoder_queries == 1 else self.num_decoder_queries // self.num_frames
-                obj_attn_masks = []
-                for i in range(self.num_frames):
-                    t2, c2, h2, w2 = hr_feat.shape
-                    hs_f = hs[-1][:, i * n_f:(i + 1) * n_f, :]
-                    memory_f = hr_feat[i, :, :, :].reshape(batch_size, c2, h2, w2)
-                    mask_f = features[0].mask[i, :, :].reshape(batch_size, h2, w2)
-                    obj_attn_mask_f = self.bbox_attention(hs_f, memory_f, mask=mask_f).flatten(0, 1)
-                    obj_attn_masks.append(obj_attn_mask_f)
-                obj_attn_masks = torch.cat(obj_attn_masks, dim=0)
+                # import ipdb;ipdb.set_trace()
+                if self.decoder_bbox_head == 'tube':
+                    obj_attn_masks = self.bbox_attention(hs[-1], hr_feat, mask=features[0].mask).flatten(0, 1)
+                else:
+                    n_f = 1 if self.num_decoder_queries == 1 else self.num_decoder_queries // self.num_frames
+                    obj_attn_masks = []
+                    # import ipdb; ipdb.set_trace()
+                    for i in range(self.num_frames):
+                        t2, c2, h2, w2 = hr_feat.shape
+                        hs_f = hs[-1][:, i * n_f:(i + 1) * n_f, :]
+                        memory_f = hr_feat[i, :, :, :].reshape(batch_size, c2, h2, w2)
+                        mask_f = features[0].mask[i, :, :].reshape(batch_size, h2, w2)
+                        obj_attn_mask_f = self.bbox_attention(hs_f, memory_f, mask=mask_f).flatten(0, 1)
+                        obj_attn_masks.append(obj_attn_mask_f)
+                    obj_attn_masks = torch.cat(obj_attn_masks, dim=0)
                 # import ipdb; ipdb.set_trace()
                 if self.decoder_attn_fuse is not None and self.decoder_attn_fuse == 'add':
                     obj_attn_masks = self.bbox_sal_adapter(obj_attn_masks)
@@ -371,7 +362,7 @@ class Transformer(nn.Module):
                     obj_attn_masks.append(obj_attn_mask_f)
                 # import ipdb;ipdb.set_trace()
                 obj_attn_masks = torch.cat(obj_attn_masks, dim=0)
-                #import ipdb;
+                # import ipdb;
                 # ipdb.set_trace()
                 if self.decoder_attn_fuse is not None and self.decoder_attn_fuse == 'add':
                     obj_attn_masks = self.bbox_sal_adapter(obj_attn_masks)
@@ -403,7 +394,6 @@ class TransformerEncoder(nn.Module):
 
         for i in range(len(num_encoder_layers)):
             # print('Encoder stage:%d dim_feedforward:%d' % (i, dim_feedforward))
-            # import ipdb;ipdb.set_trace()
             self.layers.append(nn.ModuleList())
             for j in range(num_encoder_layers[i]):
                 _nhead = nhead if i == 0 else 1
@@ -747,6 +737,7 @@ class TransformerDecoderLayer(nn.Module):
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None,
                      size_list=None):
+        # import ipdb;ipdb.set_trace()
         q = k = self.with_pos_embed(tgt, query_pos)
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
                               key_padding_mask=tgt_key_padding_mask)[0]
@@ -817,7 +808,7 @@ class VOS_SwinMEDVT(nn.Module):
         if transformer is None:
             self.input_proj = nn.Conv2d(backbone_dims[-1], hidden_dim, kernel_size=1)
         mask_head_in_channels = hidden_dim
-        if transformer is not None and transformer.use_decoder and transformer.decoder_multiscale:
+        if transformer is not None and transformer.use_decoder:
             if transformer.decoder_attn_fuse is None or transformer.decoder_attn_fuse == 'cat':
                 mask_head_in_channels = hidden_dim + transformer.bbox_nhead
         self.insmask_head = nn.Sequential(
@@ -841,6 +832,8 @@ class VOS_SwinMEDVT(nn.Module):
         return samples_dict
 
     def forward(self, samples: NestedTensor):
+        if not isinstance(samples, NestedTensor):
+            samples = nested_tensor_from_tensor_list(samples)
         if self.training:
             return self._forward_one_samples(samples)
         else:
@@ -911,7 +904,7 @@ class VOS_SwinMEDVTLPROP(VOS_SwinMEDVT):
             feat_dim = 384
             hidden_dim = 128
         elif feat_loc == 'late':
-            feat_dim = 392
+            feat_dim = 384+transformer.bbox_nhead
             hidden_dim = 128
         elif feat_loc == 'attmaps_only':
             feat_dim = 8
@@ -1133,6 +1126,11 @@ def build_swin_b_backbone(is_train, _swin_b_pretrained_path):
 
 def build_model_medvt_swinbackbone_without_criterion(args):
     logger.debug('using backbone:%s' % args.backbone)
+    if not hasattr(args,'decoder_bbox_head'):
+        args.decoder_bbox_head = 'frame'
+    if not hasattr(args,'bbox_nhead'):
+        args.bbox_nhead = args.nheads
+
     if args.backbone == 'swinS':
         backbone = build_swin_s_backbone(args.is_train, args.swin_s_pretrained_path)
         backbone_dims = (192, 384, 768, 768)
@@ -1157,7 +1155,9 @@ def build_model_medvt_swinbackbone_without_criterion(args):
         num_decoder_queries=args.num_queries,
         return_intermediate_dec=True,
         encoder_cross_layer=args.encoder_cross_layer,
-        decoder_multiscale=args.dec_multiscale
+        query_decoder_scales=args.query_decoder_scales,
+        bbox_nhead=args.bbox_nhead,
+        decoder_bbox_head = args.decoder_bbox_head
     )
 
     if args.is_train:  # weights initialize for training
@@ -1299,6 +1299,8 @@ def build_model_medvt_swinbackbone_without_criterion(args):
 
 
 def build_model_medvt_swinbackbone(args):
+    if not hasattr(args,'dec_multiscale'):
+        args.dec_multiscale=True
     # Model
     model = build_model_medvt_swinbackbone_without_criterion(args)
     # Losses

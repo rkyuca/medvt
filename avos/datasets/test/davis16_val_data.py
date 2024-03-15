@@ -19,19 +19,28 @@ logger.setLevel(logging.DEBUG)
 
 
 class Davis16ValDataset(torch.utils.data.Dataset):
-    def __init__(self, num_frames=6, val_size=473, sequence_names=None, use_flow=False, max_sc=None):
+    def __init__(self, num_frames=6, val_size=473, sequence_names=None, use_flow=False, max_sc=None, style=None):
         super(Davis16ValDataset, self).__init__()
-        # print('Davis16ValDataset->use_flow:'+str(use_flow))
+        print('Davis16ValDataset->use_flow:'+str(use_flow))
         self.num_frames = num_frames
         self.split = 'val'
         self.use_flow = use_flow
         self.im_size = val_size
+        self.style = style
         self._transforms = make_validation_transforms(min_size=val_size, max_sc=max_sc)
 
         self.davis16_val_seqs_file = dataset_path_config.davis16_val_seqs_file
         self.davis16_rgb_path = dataset_path_config.davis16_rgb_path
         self.davis16_gt_path = dataset_path_config.davis16_gt_path
         self.davis16_flow_path = dataset_path_config.davis16_flow_path
+        self.all_styles = dataset_path_config.davis16_styles
+        self.stylized_davis_path = dataset_path_config.davis16_stylized_image_path
+        if style is None or style == 'None':
+            style = 'Original'
+        print(style)
+        if style != 'Original':
+            assert style in self.all_styles
+
         self.frames_info = {
             'davis': {},
         }
@@ -66,10 +75,16 @@ class Davis16ValDataset(torch.utils.data.Dataset):
         masks = []
         mask_paths = []
         skip_current_sample_flow = False
+        img_paths = []
         for frame_id in frame_indices:
             frame_name = self.frames_info[dataset][video_name][frame_id]
             frame_ids.append(frame_name)
-            img_path = os.path.join(self.davis16_rgb_path, video_name, frame_name + '.jpg')
+            if self.style is None or self.style == 'Original':
+                img_path = os.path.join(self.davis16_rgb_path, video_name, frame_name + '.jpg')
+            else:
+                img_path = os.path.join(self.stylized_davis_path, 'JPEGImages', self.style, video_name,
+                                        frame_name + '.jpg')
+            # img_path = os.path.join(self.davis16_rgb_path, video_name, frame_name + '.jpg')
             gt_path = os.path.join(self.davis16_gt_path, video_name, frame_name + '.png')
             img_i = Image.open(img_path).convert('RGB')
             img.append(img_i)
@@ -77,13 +92,14 @@ class Davis16ValDataset(torch.utils.data.Dataset):
             gt[gt > 0] = 255
             masks.append(torch.Tensor(np.expand_dims(np.asarray(gt.copy()), axis=0)))
             mask_paths.append(gt_path)
+            img_paths.append(img_path)
             if self.use_flow and not skip_current_sample_flow:
                 prev_frame = '%05d' % (int(frame_name) - 1)
                 next_frame = '%05d' % (int(frame_name) + 1)
                 fwd_flow_file = os.path.join(self.davis16_flow_path, video_name,
-                                                 prev_frame + '_' + frame_name + '.png')
+                                             prev_frame + '_' + frame_name + '.png')
                 bkd_flow_file = os.path.join(self.davis16_flow_path, video_name,
-                                                 frame_name + '_' + next_frame + '.png')
+                                             frame_name + '_' + next_frame + '.png')
                 fwd_flow = None
                 bkd_flow = None
                 if os.path.exists(fwd_flow_file):
@@ -96,17 +112,29 @@ class Davis16ValDataset(torch.utils.data.Dataset):
                     flow = bkd_flow
                 else:
                     skip_current_sample_flow = True
-                    logger.debug('Flow not found for fwd_flow_file: : '+fwd_flow_file)
-                    logger.debug('Flow not found for bkd_flow_file: '+bkd_flow_file)
+                    logger.debug('Flow not found for fwd_flow_file: : ' + fwd_flow_file)
+                    logger.debug('Flow not found for bkd_flow_file: ' + bkd_flow_file)
                     flow = None
                 flows.append(flow)
         masks = torch.cat(masks, dim=0)
         target = {'dataset': dataset, 'video_name': video_name, 'center_frame': center_frame_name,
-                  'frame_ids': frame_ids, 'masks': masks, 'vid_len': vid_len, 'mask_paths': mask_paths}
+                  'frame_ids': frame_ids, 'masks': masks, 'vid_len': vid_len, 'mask_paths': mask_paths,
+                  'img_paths': img_paths}
         if self.use_flow and not skip_current_sample_flow:
             target['flows'] = flows
         if self._transforms is not None:
             img, target = self._transforms(img, target)
+        """        
+        if self.use_flow and not skip_current_sample_flow:
+            target['flows'] = []
+            for i in range(len(img)):
+                if target['flows'][i].shape[-2:] != img[i].shape[-2:]:
+                    target['flows'][i] = torch.nn.functional.interpolate(target['flows'][i].unsqueeze(0),
+                                                                         img[i].shape[-2:])
+                else:
+                    target['flows'][i] = target['flows'][i].unsqueeze(0)
+            target['flows'] = torch.cat(target['flows'], dim=0)
+        """
         if self.use_flow and not skip_current_sample_flow:
             target['flows'] = [torch.nn.functional.interpolate(target['flows'][i].unsqueeze(0), img[i].shape[-2:]) if target['flows'][i].shape[-2:] !=  img[i].shape[-2:] else target['flows'][i].unsqueeze(0) for i in range(len(img))]
             target['flows'] = torch.cat(target['flows'], dim=0)
@@ -124,4 +152,3 @@ def make_validation_transforms(min_size=360, max_sc=None):
         T.RandomResize([min_size], max_size=int(max_sc * min_size)),
         normalize,
     ])
-

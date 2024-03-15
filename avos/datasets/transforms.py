@@ -19,7 +19,6 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
 
-
 from avos.utils.misc import interpolate
 
 logger = logging.getLogger(__name__)
@@ -189,11 +188,13 @@ def resize(clip, target, size, max_size=None):
     target["size"] = torch.tensor([h, w])
 
     if "masks" in target:
+        # import ipdb; ipdb.set_trace()
         if target['masks'].shape[0] > 0:
             target['masks'] = interpolate(
                 target['masks'][:, None].float(), size, mode="nearest")[:, 0] > 0.5
         else:
             target['masks'] = torch.zeros((target['masks'].shape[0], h, w))
+
     if 'flows' in target:
         rescaled_flows = []
         for flow in target['flows']:
@@ -286,7 +287,7 @@ class MinIoURandomCrop(object):
                     def is_center_of_bboxes_in_patch(boxes, patch):
                         center = (boxes[:, :2] + boxes[:, 2:]) / 2
                         mask = ((center[:, 0] > patch[0]) * (center[:, 1] > patch[1]) * (center[:, 0] < patch[2]) * (
-                                    center[:, 1] < patch[3]))
+                                center[:, 1] < patch[3]))
                         return mask
 
                     mask = is_center_of_bboxes_in_patch(boxes, patch)
@@ -528,7 +529,7 @@ class ToTensor(object):
             flow_tensor = []
             for ff in target['flows']:
                 flow_tensor.append(F.to_tensor(ff))
-            target['flows']=flow_tensor
+            target['flows'] = flow_tensor
         # import ipdb;ipdb.set_trace()
         return img, target
 
@@ -536,9 +537,11 @@ class ToTensor(object):
 class RandomErasing(object):
 
     def __init__(self, *args, **kwargs):
-        self.eraser = T.RandomErasing(*args, **kwargs)
+        self.eraser = T.RandomErasing(*args, **kwargs, p=0.99)
 
     def __call__(self, img, target):
+        import ipdb;
+        ipdb.set_trace()
         return self.eraser(img), target
 
 
@@ -557,7 +560,7 @@ class Normalize(object):
         h, w = image[0].shape[-2:]
         ################################
         if 'flows' in target:
-            flows=[]
+            flows = []
             for ff in target['flows']:
                 flows.append(F.normalize(ff, mean=self.mean, std=self.std))
             target['flows'] = flows

@@ -7,11 +7,15 @@ davis16_val_seqs_file = '/local/riemann1/home/rezaul/datasets_vos/DAVIS-data/DAV
 davis16_rgb_path = '/local/riemann1/home/rezaul/datasets_vos/DAVIS-data/DAVIS_2016/JPEGImages/480p'
 davis16_gt_path = '/local/riemann1/home/rezaul/datasets_vos/DAVIS-data/DAVIS_2016/Annotations/480p'
 davis16_flow_path = '/local/riemann1/home/rezaul/datasets_vos/DAVIS-data/DAVIS17/DAVIS/davis2017-flow'
+davis16_stylized_image_path = '/local/riemann/home/msiam/Stylized_DAVIS/'
+davis16_styles = ['Lynx', 'Maruska640', 'Zuzka1', 'Zuzka2']  # 'Original',
+
 
 ytvos19_rgb_path = '/local/riemann/home/rezaul/datasets2/youtube-vos-2019/train/JPEGImages'
 ytvos19_gt_path = '/local/riemann/home/rezaul/datasets2/youtube-vos-2019/train/Annotations'
 ytvos19_flow_path = '/local/riemann1/home/rezaul/datasets_vos/Youtube-VOS18-matnet//YouTubeVOS_2018-flow'
 
+moca_dataset_root = '/local/riemann1/home/rezaul/datasets_vos/MoCA_filtered2'
 moca_dataset_images_path = '/local/riemann1/home/rezaul/datasets_vos/MoCA_filtered2/JPEGImages'
 moca_val_set_file = '/local/riemann1/home/rezaul/datasets_vos/MoCA_filtered2/val_seqs.txt'
 moca_annotations_csv = '/local/riemann1/home/rezaul/datasets_vos/MoCA_filtered2/annotations.csv'
