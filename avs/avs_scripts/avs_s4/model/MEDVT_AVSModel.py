@@ -1209,7 +1209,7 @@ class QueryDecoder(nn.Module):
             self.query_initializer = ContextQueryGenerator2(num_layers=qgen_layers, embed_dim=d_model)
             self.decoder = TransformerDecoderMM(num_decoder_layers,
                                                 return_intermediate=True,
-                                                mm_context_layers= num_decoder_layers // 3)
+                                                mm_context_layers= num_decoder_layers // 2)
             self.query_feat_norm = nn.LayerNorm(self.num_queries_per_frame)
 
     def forward(self, visual_feats, audio_feat, pos_list, batch_size, num_frames):
@@ -1361,7 +1361,7 @@ class Pred_endecoder(nn.Module):
 
         self.num_decoder_layers = 12
         self.query_decoder_scales = 4
-        self.qgen_layers = 1
+        self.qgen_layers = 3
         task_head_in_channels = self.d_model
         self.decoder_attn_fuse = 'cat'
         if self.num_decoder_layers > 0:
